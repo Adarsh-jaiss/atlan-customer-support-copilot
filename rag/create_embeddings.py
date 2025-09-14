@@ -7,8 +7,8 @@ import chromadb
 import logging
 from rag.document_processor import process_directory, SimpleChunk
 from configs.settings import OPEN_AI_EMBEDDING_MODEL, EMBEDDING_MODEL
-from rag.store import initialize_chromadb, store_chunks_in_chromadb
-from configs.settings import CHROMA_DB_COLLECTION
+from rag.store import initialize_chromadb, store_chunks_in_chromadb, initialize_pinecone_client,store_chunks_in_pinecone
+from configs.settings import CHROMA_DB_COLLECTION, PINECONE_API_KEY
 from sentence_transformers import SentenceTransformer
 
 logging.basicConfig(level=logging.INFO)
@@ -72,10 +72,12 @@ def build_knowledge_base(docs_directory,chunk_size: int = 1000, chunk_overlap: i
         embeddings = create_embeddings_batch(chunks)
     
         # Step 3: Initialize ChromaDB
-        collection = initialize_chromadb()
+        # collection = initialize_chromadb()
+        pinecone_client, pinecone_index_name, pinecone_cloud, pinecone_environment = initialize_pinecone_client()
     
         # Step 4: Store in ChromaDB
-        store_chunks_in_chromadb(chunks, embeddings, collection)
+        # store_chunks_in_chromadb(chunks, embeddings, collection)
+        store_chunks_in_pinecone(chunks=chunks, embeddings=embeddings, index_or_name=pinecone_index_name)
         logger.info("Knowledge base construction completed!")
     except Exception as e:
         logger.error(f"Error constucting knowledge base {e}")

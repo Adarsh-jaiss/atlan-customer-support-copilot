@@ -4,7 +4,7 @@ import chromadb
 from rag.create_embeddings import create_embeddings
 import logging
 from typing import Dict,Any
-from configs.settings import OPENAI_MODEL,OPENAI_API_KEY, CHROMA_DB_COLLECTION, OPEN_AI_EMBEDDING_MODEL, OLLAMA_HOST,OLLAMA_MODEL
+from configs.settings import OPENAI_MODEL,OPENAI_API_KEY, CHROMA_DB_COLLECTION
 from langchain_openai import ChatOpenAI
 from langchain_ollama.chat_models import ChatOllama
 import asyncio
@@ -12,11 +12,13 @@ from utils.read_write import read_from_file
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 from typing import Optional
+from rag.store import get_or_create_pinecone_index
 
+INDEX = get_or_create_pinecone_index()
 
 client = chromadb.PersistentClient(path="chroma_db")
 CHROMA_DB_COLL = client.get_or_create_collection(CHROMA_DB_COLLECTION)
-# print(CHROMA_DB_COLL)
+print(CHROMA_DB_COLL)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -40,28 +42,42 @@ Make sure to give a detailed answer to the user's question along with the source
 Answer:"""
 
 
-def search_similar_chunks(query: str, collection: chromadb.Collection, 
-                         n_results: int = 5) -> Dict[str, Any]:
+def search_similar_chunks(query: str, collection: chromadb.Collection,index ,n_results: int = 5) -> Dict[str, Any]:
     """Search for similar chunks using semantic similarity"""
     try:
         # Create embedding for query
         query_embedding = create_embeddings([query])[0]
         
         # Search in ChromaDB
-        results = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=n_results,
-            include=["documents", "metadatas", "distances"]
+        # results = collection.query(
+        #     query_embeddings=[query_embedding],
+        #     n_results=n_results,
+        #     include=["documents", "metadatas", "distances"]
+        # )
+        results = index.query(
+            vector=query_embedding,
+            top_k=n_results,
+            include_metadata=True
         )
         
-        # Format results
+        # Format results for chromadb
+        # formatted_results = []
+        # for i in range(len(results["ids"][0])):
+        #     formatted_results.append({
+        #         "id": results["ids"][0][i],
+        #         "content": results["documents"][0][i],
+        #         "metadata": results["metadatas"][0][i],
+        #         "similarity_score": 1 - results["distances"][0][i]  # Convert distance to similarity
+        #     })
+        
+
         formatted_results = []
-        for i in range(len(results["ids"][0])):
+        for match in results["matches"]:
             formatted_results.append({
-                "id": results["ids"][0][i],
-                "content": results["documents"][0][i],
-                "metadata": results["metadatas"][0][i],
-                "similarity_score": 1 - results["distances"][0][i]  # Convert distance to similarity
+                "id": match["id"],
+                "content": match["metadata"].get("content", ""),
+                "metadata": match["metadata"],
+                "similarity_score": match["score"]
             })
         
         return {
@@ -116,7 +132,7 @@ async def query_knowledge_base(query: str, topic: Optional[str] = None):
     if topic and topic not in ["How-to", "Product", "Best practices", "API/SDK", "SSO"]:
         return f"This ticket has been classified as a '{topic}' issue and routed to the appropriate team.You will hear from the appropriate team soon.", None
 
-    search_results = search_similar_chunks(query, CHROMA_DB_COLL)
+    search_results = search_similar_chunks(query, CHROMA_DB_COLL,INDEX)
     result = {
         "query": query,
         "search_results": search_results
@@ -128,6 +144,11 @@ async def query_knowledge_base(query: str, topic: Optional[str] = None):
     result["rag_response"] = rag_response
     return result["rag_response"], None
 
-# if __name__ == "__main__":
-#     res = asyncio.run(query_knowledge_base("Hi team, we're trying to set up our primary Snowflake production database as a new source in Atlan, but the connection keeps failing. We've tried using our standard service account, but it's not working. Our entire BI team is blocked on this integration for a major upcoming project, so it's quite urgent. Could you please provide a definitive list of the exact permissions and credentials needed on the Snowflake side to get this working? Thanks."))
-#     print(res)
+if __name__ == "__main__":
+    async def main():
+        res = await query_knowledge_base.ainvoke({
+            "query": "Hi team, we're trying to set up our primary Snowflake production database as a new source in Atlan, but the connection keeps failing. We've tried using our standard service account, but it's not working. Our entire BI team is blocked on this integration for a major upcoming project, so it's quite urgent. Could you please provide a definitive list of the exact permissions and credentials needed on the Snowflake side to get this working? Thanks."
+        })
+        print(res)
+    
+    asyncio.run(main())

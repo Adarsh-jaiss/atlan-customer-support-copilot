@@ -10,16 +10,13 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 OPEN_AI_EMBEDDING_MODEL = os.getenv("OPEN_AI_EMBEDDING_MODEL","text-embedding-3-small")
 MONGO_DB_URI = os.getenv("MONGO_DB_URI", "mongodb://admin:password@localhost:27018/")
 
-# Redis Configuration
 CHROMA_DB_COLLECTION = os.getenv("CHROMA_DB_COLLECTION","atlan-copilot")
+PINECONE_INDEX_NAME="atlan-agent"
+PINECONE_ENVIRONMENT="us-east-1"
+PINECONE_API_KEY=os.getenv("PINECONE_API")
+PINECONE_CLOUD = os.getenv("PINECONE_CLOUD", "aws")
+PINECONE_HOST=os.getenv("PINECONE_HOST")
 
-# MongoDB Collection Configuration
-# MONGO_DATABASE_NAME = os.getenv("MONGO_DATABASE_NAME", "")
-# MONGO_COLLECTION_NAME = os.getenv("MONGO_COLLECTION_NAME", "")
-
-# Ollama
-OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL="llama2"
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 
 # logger.info(f"MONGO_DB_URI: {MONGO_DB_URI}")

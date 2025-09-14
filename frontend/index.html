@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Customer Support Copilot</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <h1>Customer Support Copilot</h1>
+            <div class="header-buttons">
+                <button class="btn btn--secondary btn--sm" id="loadSampleTickets">Load Sample Tickets</button>
+                <button class="btn btn--secondary btn--sm" id="loadClassifiedTickets">Load Classified Tickets</button>
+            </div>
+        </header>
+        
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Chat Interface -->
+            <div class="chat-container">
+                <div class="chat-messages" id="chatMessages">
+                    <div class="welcome-message">
+                        <h2>How can I help you today?</h2>
+                        <p>Enter your question or ticket below, or use the classification form for detailed ticket analysis.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="input-container">
+                <div class="input-wrapper">
+                    <div class="input-header">
+                        <label for="promptInput" class="input-label">Enter your question or ticket(s)</label>
+                        <button class="classify-toggle" id="classifyToggle" title="Classify a specific ticket">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M9 11H5a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7a2 2 0 0 0-2-2h-4"></path>
+                                <polyline points="9,11 12,14 15,11"></polyline>
+                                <path d="m12 2 0 12"></path>
+                            </svg>
+                            Classify Ticket
+                        </button>
+                    </div>
+                    <div class="input-area">
+                        <textarea 
+                            id="promptInput" 
+                            placeholder="Type your question or paste ticket details here..."
+                            rows="3"
+                            class="form-control input-textarea"
+                        ></textarea>
+                        <button class="btn btn--primary send-button" id="sendButton">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="22" y1="2" x2="11" y2="13"></line>
+                                <polygon points="22,2 15,22 11,13 2,9 22,2"></polygon>
+                            </svg>
+                            Send
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sample Tickets Sidebar -->
+        <div class="tickets-sidebar" id="ticketsSidebar">
+            <div class="sidebar-header">
+                <h3>Sample Tickets</h3>
+                <button class="btn btn--outline btn--sm" id="closeSidebar">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
+            </div>
+            <div class="tickets-list" id="ticketsList">
+                <div class="loading-state">
+                    <p>Load sample tickets to get started</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Classification Modal -->
+        <div class="modal hidden" id="classifyModal">
+            <div class="modal-backdrop" id="modalBackdrop"></div>
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Classify Ticket</h3>
+                    <button class="modal-close" id="closeModal">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
+                </div>
+                <form class="classification-form" id="classificationForm">
+                    <div class="form-group">
+                        <label for="ticketId" class="form-label">Ticket ID</label>
+                        <input type="text" id="ticketId" class="form-control" placeholder="e.g., TICKET-001" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="ticketSubject" class="form-label">Subject</label>
+                        <input type="text" id="ticketSubject" class="form-control" placeholder="Brief description of the issue" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="ticketBody" class="form-label">Body</label>
+                        <textarea id="ticketBody" class="form-control" rows="4" placeholder="Detailed description of the issue or question" required></textarea>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" class="btn btn--outline" id="cancelClassify">Cancel</button>
+                        <button type="submit" class="btn btn--primary" id="submitClassify">Classify Ticket</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Loading Overlay -->
+        <div class="loading-overlay hidden" id="loadingOverlay">
+            <div class="loading-spinner">
+                <div class="spinner"></div>
+                <p>Processing...</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

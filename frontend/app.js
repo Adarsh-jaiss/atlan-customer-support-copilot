@@ -1,0 +1,1230 @@
+// Application state
+const appState = {
+    chatHistory: [],
+    sampleTickets: [],
+    classifiedTickets: [], // Add storage for classified tickets
+    currentSession: generateSessionId(),
+    isStreaming: false,
+    apiBaseUrl: 'http://localhost:8003'
+};
+
+// Generate unique session ID
+function generateSessionId() {
+    return 'session-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+}
+
+// DOM elements
+const elements = {
+    chatMessages: document.getElementById('chatMessages'),
+    promptInput: document.getElementById('promptInput'),
+    sendButton: document.getElementById('sendButton'),
+    loadSampleTickets: document.getElementById('loadSampleTickets'),
+    loadClassifiedTickets: document.getElementById('loadClassifiedTickets'), // New button
+    ticketsSidebar: document.getElementById('ticketsSidebar'),
+    ticketsList: document.getElementById('ticketsList'),
+    closeSidebar: document.getElementById('closeSidebar'),
+    classifyToggle: document.getElementById('classifyToggle'),
+    classifyModal: document.getElementById('classifyModal'),
+    modalBackdrop: document.getElementById('modalBackdrop'),
+    closeModal: document.getElementById('closeModal'),
+    classificationForm: document.getElementById('classificationForm'),
+    cancelClassify: document.getElementById('cancelClassify'),
+    loadingOverlay: document.getElementById('loadingOverlay')
+};
+
+// Initialize application
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('Application initializing...');
+    initializeEventListeners();
+    setupWelcomeMessage();
+    hideLoading(); // Ensure loading overlay is hidden on startup
+});
+
+// Event listeners
+function initializeEventListeners() {
+    console.log('Setting up event listeners...');
+    
+    // Send message
+    elements.sendButton.addEventListener('click', function(e) {
+        e.preventDefault();
+        console.log('Send button clicked');
+        handleSendMessage();
+    });
+    
+    elements.promptInput.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            console.log('Enter pressed in input');
+            handleSendMessage();
+        }
+    });
+
+    // Load sample tickets
+    elements.loadSampleTickets.addEventListener('click', function(e) {
+        e.preventDefault();
+        console.log('Load sample tickets clicked');
+        handleLoadSampleTickets();
+    });
+
+    // Load classified tickets - NEW
+    elements.loadClassifiedTickets.addEventListener('click', function(e) {
+        e.preventDefault();
+        console.log('Load classified tickets clicked');
+        handleLoadClassifiedTickets();
+    });
+
+    // Sidebar controls
+    elements.closeSidebar.addEventListener('click', function(e) {
+        e.preventDefault();
+        console.log('Close sidebar clicked');
+        closeSidebar();
+    });
+
+    // Classification modal
+    elements.classifyToggle.addEventListener('click', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        console.log('Classify toggle clicked');
+        openClassificationModal();
+    });
+
+    elements.closeModal.addEventListener('click', function(e) {
+        e.preventDefault();
+        console.log('Close modal clicked');
+        closeClassificationModal();
+    });
+
+    elements.modalBackdrop.addEventListener('click', function(e) {
+        console.log('Modal backdrop clicked');
+        closeClassificationModal();
+    });
+
+    elements.cancelClassify.addEventListener('click', function(e) {
+        e.preventDefault();
+        console.log('Cancel classify clicked');
+        closeClassificationModal();
+    });
+
+    elements.classificationForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        console.log('Classification form submitted');
+        handleClassifySubmit(e);
+    });
+
+    // Auto-resize textarea
+    elements.promptInput.addEventListener('input', autoResizeTextarea);
+
+    // Focus input on click
+    elements.promptInput.addEventListener('click', function() {
+        this.focus();
+    });
+
+    console.log('Event listeners set up successfully');
+}
+
+// Auto resize textarea
+function autoResizeTextarea() {
+    const textarea = elements.promptInput;
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.min(textarea.scrollHeight, 200) + 'px';
+}
+
+// Setup welcome message handler
+function setupWelcomeMessage() {
+    let hasTyped = false;
+    elements.promptInput.addEventListener('input', function() {
+        if (!hasTyped && elements.promptInput.value.trim()) {
+            const welcomeMessage = document.querySelector('.welcome-message');
+            if (welcomeMessage) {
+                welcomeMessage.style.opacity = '0.5';
+                hasTyped = true;
+            }
+        }
+    });
+}
+
+// Handle send message
+async function handleSendMessage() {
+    console.log('handleSendMessage called');
+    const prompt = elements.promptInput.value.trim();
+    console.log('Prompt:', prompt);
+    
+    if (!prompt || appState.isStreaming) {
+        console.log('Empty prompt or already streaming, returning');
+        return;
+    }
+
+    // Clear welcome message
+    const welcomeMessage = document.querySelector('.welcome-message');
+    if (welcomeMessage) {
+        welcomeMessage.remove();
+    }
+
+    // Add user message to chat
+    addUserMessage(prompt);
+    elements.promptInput.value = '';
+    autoResizeTextarea();
+
+    // Show loading state for assistant response
+    const assistantMessageElement = addAssistantMessage('', true);
+
+    try {
+        appState.isStreaming = true;
+        elements.sendButton.disabled = true;
+
+        // Call streaming API
+        await streamResponse(prompt, assistantMessageElement);
+    } catch (error) {
+        console.error('Error sending message:', error);
+        updateAssistantMessage(assistantMessageElement, 'Sorry, there was an error processing your request. Please check if the API server is running on http://localhost:8003 and try again.', true);
+    } finally {
+        appState.isStreaming = false;
+        elements.sendButton.disabled = false;
+    }
+}
+
+// Add user message to chat
+function addUserMessage(message) {
+    console.log('Adding user message:', message);
+    const messageElement = createMessageElement(message, 'user');
+    elements.chatMessages.appendChild(messageElement);
+    scrollToBottom();
+}
+
+// Add assistant message to chat
+function addAssistantMessage(message, isStreaming = false) {
+    console.log('Adding assistant message:', message, 'streaming:', isStreaming);
+    const messageElement = createMessageElement(message, 'assistant', isStreaming);
+    elements.chatMessages.appendChild(messageElement);
+    scrollToBottom();
+    return messageElement;
+}
+
+// Create message element
+function createMessageElement(content, sender, isStreaming = false) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `message message--${sender}`;
+
+    const avatar = document.createElement('div');
+    avatar.className = `message-avatar ${sender === 'user' ? 'message-avatar--user' : ''}`;
+    avatar.textContent = sender === 'user' ? 'U' : 'A';
+
+    const contentDiv = document.createElement('div');
+    contentDiv.className = 'message-content';
+
+    const bubble = document.createElement('div');
+    bubble.className = `message-bubble ${isStreaming ? 'message-streaming' : ''}`;
+    bubble.innerHTML = formatMessage(content) || (isStreaming ? 'Thinking...' : '');
+
+    if (isStreaming && !content) {
+        const cursor = document.createElement('span');
+        cursor.className = 'streaming-cursor';
+        bubble.appendChild(cursor);
+    }
+
+    const time = document.createElement('div');
+    time.className = 'message-time';
+    time.textContent = new Date().toLocaleTimeString();
+
+    contentDiv.appendChild(bubble);
+    contentDiv.appendChild(time);
+    messageDiv.appendChild(avatar);
+    messageDiv.appendChild(contentDiv);
+
+    return messageDiv;
+}
+
+// Format message content
+function formatMessage(content) {
+    if (!content) return '';
+    // Simple markdown-like formatting
+    return content
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.*?)\*/g, '<em>$1</em>')
+        .replace(/`(.*?)`/g, '<code>$1</code>')
+        .replace(/\n/g, '<br>');
+}
+
+// Update assistant message content
+function updateAssistantMessage(messageElement, content, isComplete = false) {
+    const bubble = messageElement.querySelector('.message-bubble');
+    bubble.innerHTML = formatMessage(content);
+
+    if (!isComplete) {
+        const cursor = document.createElement('span');
+        cursor.className = 'streaming-cursor';
+        bubble.appendChild(cursor);
+    } else {
+        bubble.classList.remove('message-streaming');
+        const cursor = bubble.querySelector('.streaming-cursor');
+        if (cursor) cursor.remove();
+    }
+    scrollToBottom();
+}
+
+// Stream response from API with single artifact for tool calls
+async function streamResponse(prompt, messageElement) {
+    console.log('Starting stream response for prompt:', prompt);
+    
+    const payload = {
+        prompt: prompt,
+        session: appState.currentSession,
+        user_id: 'user-' + Date.now(),
+        organization_id: 'org-' + Date.now()
+    };
+
+    try {
+        console.log('Making API call to:', `${appState.apiBaseUrl}/stream`);
+        const response = await fetch(`${appState.apiBaseUrl}/stream`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let accumulatedContent = '';
+        let toolCallArtifact = null; // Single artifact for all tool calls
+        let toolCallsData = []; // Array to store all tool call data
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    const data = line.slice(6);
+                    if (data === '[DONE]') {
+                        updateAssistantMessage(messageElement, accumulatedContent, true);
+                        if (toolCallArtifact) {
+                            updateToolCallArtifact(toolCallArtifact, toolCallsData, true);
+                        }
+                        return;
+                    }
+
+                    try {
+                        const parsed = JSON.parse(data);
+                        
+                        // Handle text content
+                        if (parsed.content !== undefined && parsed.content !== null) {
+                            if (typeof parsed.content === 'string') {
+                                accumulatedContent += parsed.content;
+                                updateAssistantMessage(messageElement, accumulatedContent);
+                            }
+                        }
+
+                        // Handle tool calls - create single artifact if not exists
+                        if (parsed.tool_calls) {
+                            if (!toolCallArtifact) {
+                                toolCallArtifact = createSingleToolCallArtifact(messageElement);
+                            }
+                            
+                            // Add tool calls to our data array
+                            const toolCallsArray = Array.isArray(parsed.tool_calls) ? parsed.tool_calls : [parsed.tool_calls];
+                            toolCallsArray.forEach(toolCall => {
+                                const existingIndex = toolCallsData.findIndex(tc => tc.id === toolCall.id);
+                                if (existingIndex >= 0) {
+                                    toolCallsData[existingIndex] = { ...toolCallsData[existingIndex], ...toolCall };
+                                } else {
+                                    toolCallsData.push({ 
+                                        ...toolCall, 
+                                        status: 'calling',
+                                        timestamp: new Date().toISOString()
+                                    });
+                                }
+                            });
+                            
+                            updateToolCallArtifact(toolCallArtifact, toolCallsData);
+                        }
+
+                        // Handle tool call results/responses
+                        if (parsed.tool_call_results || parsed.tool_responses) {
+                            if (toolCallArtifact) {
+                                const results = parsed.tool_call_results || parsed.tool_responses;
+                                const resultsArray = Array.isArray(results) ? results : [results];
+                                
+                                resultsArray.forEach(result => {
+                                    const toolCallIndex = toolCallsData.findIndex(tc => 
+                                        tc.id === result.tool_call_id || tc.name === result.tool_name
+                                    );
+                                    if (toolCallIndex >= 0) {
+                                        toolCallsData[toolCallIndex].result = result.content || result.result;
+                                        toolCallsData[toolCallIndex].status = 'completed';
+                                    }
+                                });
+                                
+                                updateToolCallArtifact(toolCallArtifact, toolCallsData);
+                            }
+                        }
+
+                    } catch (e) {
+                        // Non-JSON data, treat as plain text
+                        if (data.trim()) {
+                            accumulatedContent += data;
+                            updateAssistantMessage(messageElement, accumulatedContent);
+                        }
+                    }
+                }
+            }
+        }
+
+        updateAssistantMessage(messageElement, accumulatedContent || 'Response completed.', true);
+        if (toolCallArtifact) {
+            updateToolCallArtifact(toolCallArtifact, toolCallsData, true);
+        }
+
+    } catch (error) {
+        console.error('Streaming error:', error);
+        updateAssistantMessage(messageElement, 
+            `Error: Unable to connect to the API server at ${appState.apiBaseUrl}. ` +
+            'Please ensure the server is running and try again. ' +
+            'You can test with mock data in the meantime.', true);
+    }
+}
+
+// Create single tool call artifact
+function createSingleToolCallArtifact(messageElement) {
+    const contentDiv = messageElement.querySelector('.message-content');
+    
+    const artifact = document.createElement('div');
+    artifact.className = 'artifact';
+    
+    const header = document.createElement('div');
+    header.className = 'artifact-header expanded';
+    header.innerHTML = `
+        <span class="artifact-icon">🔧</span>
+        Agent Analysis
+        <span class="artifact-toggle">▼</span>
+    `;
+    
+    const content = document.createElement('div');
+    content.className = 'artifact-content expanded';
+    content.innerHTML = '<div class="tool-calls-container">Analyzing your request...</div>';
+    
+    header.addEventListener('click', () => {
+        header.classList.toggle('expanded');
+        content.classList.toggle('expanded');
+        const toggle = header.querySelector('.artifact-toggle');
+        toggle.textContent = header.classList.contains('expanded') ? '▼' : '▶';
+    });
+    
+    artifact.appendChild(header);
+    artifact.appendChild(content);
+    contentDiv.appendChild(artifact);
+    
+    scrollToBottom();
+    return artifact;
+}
+
+// Update single tool call artifact with all tool call data
+function updateToolCallArtifact(artifact, toolCallsData, isComplete = false) {
+    const content = artifact.querySelector('.artifact-content');
+    const container = content.querySelector('.tool-calls-container');
+    
+    let html = '';
+    
+    toolCallsData.forEach((toolCall, index) => {
+        const status = toolCall.status || 'calling';
+        const statusIcon = status === 'completed' ? '✅' : status === 'calling' ? '⏳' : '🔄';
+        const functionName = toolCall.function?.name || toolCall.name || 'Unknown Function';
+        const args = toolCall.function?.arguments || toolCall.args || '{}';
+        
+        html += `
+            <div class="tool-call-item ${status}">
+                <div class="tool-call-header">
+                    <span class="tool-call-status">${statusIcon}</span>
+                    <span class="tool-call-name">${functionName}</span>
+                    <span class="tool-call-time">${new Date(toolCall.timestamp).toLocaleTimeString()}</span>
+                </div>
+                <div class="tool-call-details">
+                    <div class="tool-call-args">
+                        <strong>Arguments:</strong>
+                        <pre><code>${safeJSONStringify(typeof args === 'string' ? JSON.parse(args) : args, 2)}</code></pre>
+                    </div>
+                    ${toolCall.result ? `
+                        <div class="tool-call-result">
+                            <strong>Result:</strong>
+                            <div class="tool-result-content">${formatToolResult(toolCall.result)}</div>
+                        </div>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+    });
+    
+    if (!html) {
+        html = isComplete ? 'No tool calls detected' : 'Analyzing your request...';
+    }
+    
+    container.innerHTML = html;
+    scrollToBottom();
+}
+
+// Format tool call result for display
+function formatToolResult(result) {
+    if (typeof result === 'string') {
+        // If it looks like JSON, try to format it
+        try {
+            const parsed = JSON.parse(result);
+            return `<pre><code>${JSON.stringify(parsed, null, 2)}</code></pre>`;
+        } catch (e) {
+            // Plain text result
+            return `<div class="text-result">${result.replace(/\n/g, '<br>')}</div>`;
+        }
+    } else if (typeof result === 'object') {
+        return `<pre><code>${JSON.stringify(result, null, 2)}</code></pre>`;
+    } else {
+        return `<div class="text-result">${String(result)}</div>`;
+    }
+}
+
+// Safe JSON stringify to handle errors/cycles
+function safeJSONStringify(value, spaces) {
+    const cache = new Set();
+    try {
+        return JSON.stringify(value, function(key, val) {
+            if (typeof val === 'object' && val !== null) {
+                if (cache.has(val)) return '[Circular]';
+                cache.add(val);
+            }
+            return val;
+        }, spaces);
+    } catch (err) {
+        try {
+            return String(value);
+        } catch (_) {
+            return '[Unserializable]';
+        }
+    }
+}
+
+// Scroll to bottom
+function scrollToBottom() {
+    elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+}
+
+// Show/hide loading
+function showLoading() {
+    if (elements.loadingOverlay) {
+        elements.loadingOverlay.style.display = 'flex';
+    }
+}
+
+function hideLoading() {
+    if (elements.loadingOverlay) {
+        elements.loadingOverlay.style.display = 'none';
+    }
+}
+
+// Show info message
+function showInfoMessage(message) {
+    // Create a temporary info message
+    const infoDiv = document.createElement('div');
+    infoDiv.className = 'info-message';
+    infoDiv.textContent = message;
+    infoDiv.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: #3b82f6;
+        color: white;
+        padding: 12px 16px;
+        border-radius: 8px;
+        z-index: 1000;
+        animation: slideIn 0.3s ease-out;
+    `;
+    
+    document.body.appendChild(infoDiv);
+    
+    setTimeout(() => {
+        infoDiv.style.animation = 'slideOut 0.3s ease-in';
+        setTimeout(() => infoDiv.remove(), 300);
+    }, 3000);
+}
+
+// Truncate text helper
+function truncateText(text, maxLength) {
+    if (text.length <= maxLength) return text;
+    return text.substring(0, maxLength) + '...';
+}
+
+// Handle classify submit
+async function handleClassifySubmit(event) {
+    event.preventDefault();
+    
+    const formData = new FormData(event.target);
+    const ticketData = {
+        id: formData.get('ticketId'),
+        subject: formData.get('subject'),
+        body: formData.get('body')
+    };
+
+    showLoading();
+
+    try {
+        const response = await fetch(`${appState.apiBaseUrl}/classify`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(ticketData)
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const result = await response.json();
+        closeClassificationModal();
+        
+        // Display classification result
+        const resultMessage = `Classification Result:\n${JSON.stringify(result, null, 2)}`;
+        addAssistantMessage(resultMessage);
+        
+    } catch (error) {
+        console.error('Error classifying ticket:', error);
+        showInfoMessage('Classification failed. Please try again.');
+    } finally {
+        hideLoading();
+    }
+}
+
+// Modal functions
+function openClassificationModal() {
+    elements.classifyModal.style.display = 'block';
+    elements.modalBackdrop.style.display = 'block';
+}
+
+function closeClassificationModal() {
+    elements.classifyModal.style.display = 'none';
+    elements.modalBackdrop.style.display = 'none';
+    elements.classificationForm.reset();
+}
+
+// Sidebar functions
+function openSidebar() {
+    elements.ticketsSidebar.classList.add('open');
+}
+
+function closeSidebar() {
+    elements.ticketsSidebar.classList.remove('open');
+}
+
+// NEW: Handle load classified tickets with better error handling
+async function handleLoadClassifiedTickets() {
+    console.log('Loading classified tickets...');
+    showLoading();
+
+    try {
+        console.log('Making API call to:', `${appState.apiBaseUrl}/load-classified-tickets`);
+        
+        // Add a timeout to the fetch request
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+        
+        const response = await fetch(`${appState.apiBaseUrl}/load-classified-tickets`, {
+            method: 'GET',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+            },
+            signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+
+        if (!response.ok) {
+            // Log the response details for debugging
+            console.error('Response not OK:', {
+                status: response.status,
+                statusText: response.statusText,
+                url: response.url
+            });
+            
+            if (response.status === 404) {
+                throw new Error('Endpoint not found. Make sure /load-classified-tickets is implemented on your backend.');
+            } else if (response.status === 500) {
+                const errorText = await response.text().catch(() => 'Unknown server error');
+                throw new Error(`Server error (500): ${errorText}`);
+            } else {
+                throw new Error(`HTTP error! status: ${response.status} - ${response.statusText}`);
+            }
+        }
+
+        const rawData = await response.json();
+        console.log('Received classified tickets:', rawData);
+        
+        // Handle the response structure
+        if (rawData && rawData.classified_tickets && Array.isArray(rawData.classified_tickets)) {
+            appState.classifiedTickets = rawData.classified_tickets;
+        } else if (Array.isArray(rawData)) {
+            // Handle case where API returns array directly
+            appState.classifiedTickets = rawData;
+        } else {
+            console.warn('Unexpected response format:', rawData);
+            throw new Error('Invalid response format from server');
+        }
+        
+        displayClassifiedTickets();
+        openClassifiedSidebar(); // Use the wider sidebar
+
+    } catch (error) {
+        console.error('Error loading classified tickets:', error);
+        
+        let errorMessage = 'Failed to load classified tickets. ';
+        if (error.name === 'AbortError') {
+            errorMessage += 'Request timed out.';
+        } else if (error.message.includes('fetch')) {
+            errorMessage += 'Cannot connect to API server. Please check if the server is running on http://localhost:8003';
+        } else {
+            errorMessage += error.message;
+        }
+        
+        // Show mock classified tickets for demonstration
+        console.log('Loading mock classified tickets...');
+        appState.classifiedTickets = getMockClassifiedTickets();
+        displayClassifiedTickets();
+        openClassifiedSidebar();
+        showInfoMessage(errorMessage + ' Using sample data.');
+    } finally {
+        hideLoading();
+    }
+}
+
+// NEW: Open wider sidebar for classified tickets
+function openClassifiedSidebar() {
+    elements.ticketsSidebar.classList.add('open');
+    elements.ticketsSidebar.classList.add('wide'); // Add wide class for classified tickets
+}
+
+// NEW: Display classified tickets with enhanced layout
+function displayClassifiedTickets() {
+    console.log('Displaying', appState.classifiedTickets.length, 'classified tickets');
+    
+    // Update sidebar header
+    const sidebarHeader = elements.ticketsSidebar.querySelector('.sidebar-header h3');
+    if (sidebarHeader) {
+        sidebarHeader.textContent = 'Classified Tickets';
+    }
+    
+    if (appState.classifiedTickets.length === 0) {
+        elements.ticketsList.innerHTML = '<div class="empty-state">No classified tickets found</div>';
+        return;
+    }
+
+    const ticketsHTML = appState.classifiedTickets.map(classifiedTicket => {
+        const ticket = classifiedTicket.ticket;
+        const topicColor = getTopicColor(classifiedTicket.topic);
+        const sentimentColor = getSentimentColor(classifiedTicket.sentiment);
+        const priorityColor = getPriorityColor(classifiedTicket.priority);
+        
+        return `
+            <div class="classified-ticket-card">
+                <div class="classified-ticket-header">
+                    <div class="ticket-id-container">
+                        <span class="ticket-id">${ticket.id}</span>
+                    </div>
+                    <div class="classification-tags">
+                        <span class="tag topic-tag" style="background-color: ${topicColor}">
+                            <span class="tag-icon">🏷️</span>
+                            ${classifiedTicket.topic}
+                        </span>
+                        <span class="tag sentiment-tag" style="background-color: ${sentimentColor}">
+                            <span class="tag-icon">😊</span>
+                            ${classifiedTicket.sentiment}
+                        </span>
+                        <span class="tag priority-tag" style="background-color: ${priorityColor}">
+                            <span class="tag-icon">⚡</span>
+                            ${classifiedTicket.priority}
+                        </span>
+                    </div>
+                </div>
+                
+                <div class="ticket-content">
+                    <h4 class="ticket-subject">${ticket.subject}</h4>
+                    <div class="ticket-body-preview">
+                        ${truncateText(ticket.body, 200)}
+                        ${ticket.body.length > 200 ? '<button class="expand-body-btn" onclick="toggleBodyExpansion(this)">Show more</button>' : ''}
+                    </div>
+                    <div class="ticket-body-full" style="display: none;">
+                        ${ticket.body}
+                        <button class="collapse-body-btn" onclick="toggleBodyExpansion(this)">Show less</button>
+                    </div>
+                </div>
+                
+                <div class="classification-analysis">
+                    <div class="analysis-section">
+                        <div class="analysis-header">
+                            <span class="analysis-icon">🎯</span>
+                            <strong>Topic Analysis</strong>
+                        </div>
+                        <div class="analysis-content">${classifiedTicket.reasoning?.topic_explanation || 'No explanation provided'}</div>
+                    </div>
+                    
+                    <div class="analysis-section">
+                        <div class="analysis-header">
+                            <span class="analysis-icon">💭</span>
+                            <strong>Sentiment Analysis</strong>
+                        </div>
+                        <div class="analysis-content">${classifiedTicket.reasoning?.sentiment_explanation || 'No explanation provided'}</div>
+                    </div>
+                    
+                    <div class="analysis-section">
+                        <div class="analysis-header">
+                            <span class="analysis-icon">📊</span>
+                            <strong>Priority Analysis</strong>
+                        </div>
+                        <div class="analysis-content">${classifiedTicket.reasoning?.priority_explanation || 'No explanation provided'}</div>
+                    </div>
+                </div>
+                
+                <div class="ticket-actions">
+                    <button class="btn btn--primary btn--sm send-ticket-btn" onclick="sendClassifiedTicketToAgent('${ticket.id}')">
+                        <span class="btn-icon">🚀</span>
+                        Send to Agent
+                    </button>
+                    <button class="btn btn--secondary btn--sm" onclick="copyTicketDetails('${ticket.id}')">
+                        <span class="btn-icon">📋</span>
+                        Copy Details
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    elements.ticketsList.innerHTML = ticketsHTML;
+}
+
+// NEW: Toggle body expansion
+function toggleBodyExpansion(button) {
+    const ticketCard = button.closest('.classified-ticket-card');
+    const preview = ticketCard.querySelector('.ticket-body-preview');
+    const full = ticketCard.querySelector('.ticket-body-full');
+    
+    if (preview.style.display === 'none') {
+        // Show preview, hide full
+        preview.style.display = 'block';
+        full.style.display = 'none';
+    } else {
+        // Show full, hide preview
+        preview.style.display = 'none';
+        full.style.display = 'block';
+    }
+}
+
+// NEW: Copy ticket details to clipboard
+function copyTicketDetails(ticketId) {
+    const classifiedTicket = appState.classifiedTickets.find(ct => ct.ticket.id === ticketId);
+    if (!classifiedTicket) return;
+
+    const ticket = classifiedTicket.ticket;
+    const details = `Ticket ID: ${ticket.id}
+Subject: ${ticket.subject}
+Body: ${ticket.body}
+
+Classification:
+- Topic: ${classifiedTicket.topic}
+- Sentiment: ${classifiedTicket.sentiment}
+- Priority: ${classifiedTicket.priority}
+
+Analysis:
+- Topic: ${classifiedTicket.reasoning?.topic_explanation || 'N/A'}
+- Sentiment: ${classifiedTicket.reasoning?.sentiment_explanation || 'N/A'}
+- Priority: ${classifiedTicket.reasoning?.priority_explanation || 'N/A'}`;
+
+    navigator.clipboard.writeText(details).then(() => {
+        showInfoMessage('Ticket details copied to clipboard!');
+    }).catch(err => {
+        console.error('Failed to copy to clipboard:', err);
+        showInfoMessage('Failed to copy to clipboard');
+    });
+}
+
+// NEW: Get color for topic tags
+function getTopicColor(topic) {
+    const colors = {
+        'How-to': '#3b82f6',      // Blue
+        'Product': '#10b981',      // Emerald
+        'Connector': '#f59e0b',    // Amber
+        'Lineage': '#8b5cf6',      // Violet
+        'API/SDK': '#ef4444',      // Red
+        'SSO': '#06b6d4',          // Cyan
+        'Glossary': '#84cc16',     // Lime
+        'Best practices': '#6366f1', // Indigo
+        'Sensitive data': '#ec4899', // Pink
+    };
+    return colors[topic] || '#6b7280'; // Default gray
+}
+
+// NEW: Get color for sentiment tags
+function getSentimentColor(sentiment) {
+    const colors = {
+        'Frustrated': '#ef4444',   // Red
+        'Curious': '#3b82f6',      // Blue
+        'Angry': '#dc2626',        // Dark red
+        'Neutral': '#6b7280',      // Gray
+        'Urgent': '#f59e0b',       // Amber
+        'Happy': '#10b981',        // Green
+        'Confused': '#8b5cf6',     // Purple
+    };
+    return colors[sentiment] || '#6b7280'; // Default gray
+}
+
+// NEW: Get color for priority tags
+function getPriorityColor(priority) {
+    const colors = {
+        'P0': '#dc2626',           // High priority - Red
+        'P1': '#f59e0b',           // Medium priority - Amber
+        'P2': '#10b981',           // Low priority - Green
+    };
+    return colors[priority] || '#6b7280'; // Default gray
+}
+
+// NEW: Send classified ticket to agent
+async function sendClassifiedTicketToAgent(ticketId) {
+    const classifiedTicket = appState.classifiedTickets.find(ct => ct.ticket.id === ticketId);
+    if (!classifiedTicket) return;
+
+    const ticket = classifiedTicket.ticket;
+    const prompt = `Ticket ID: ${ticket.id}\nSubject: ${ticket.subject}\nBody: ${ticket.body}\n\nClassification:\n- Topic: ${classifiedTicket.topic}\n- Sentiment: ${classifiedTicket.sentiment}\n- Priority: ${classifiedTicket.priority}`;
+    
+    closeSidebar();
+    
+    // Clear welcome message if exists
+    const welcomeMessage = document.querySelector('.welcome-message');
+    if (welcomeMessage) {
+        welcomeMessage.remove();
+    }
+
+    // Add user message
+    addUserMessage(prompt);
+    
+    // Show loading state for assistant response
+    const assistantMessageElement = addAssistantMessage('', true);
+
+    try {
+        appState.isStreaming = true;
+        elements.sendButton.disabled = true;
+
+        // Call invoke API for classified ticket processing
+        const payload = {
+            prompt: prompt,
+            session: appState.currentSession,
+            user_id: 'user-' + Date.now(),
+            organization_id: 'org-' + Date.now()
+        };
+
+        const response = await fetch(`${appState.apiBaseUrl}/stream`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload)
+        });
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        // Use streaming response instead of JSON for classified tickets
+        await streamResponse(prompt, assistantMessageElement);
+
+    } catch (error) {
+        console.error('Error sending classified ticket to agent:', error);
+        updateAssistantMessage(assistantMessageElement, 'Error processing classified ticket. Please try again.', true);
+    } finally {
+        appState.isStreaming = false;
+        elements.sendButton.disabled = false;
+    }
+}
+
+// NEW: Mock classified tickets for testing
+function getMockClassifiedTickets() {
+    return [
+        {
+            ticket: {
+                id: "TICKET-245",
+                subject: "Connecting Snowflake to Atlan - required permissions?",
+                body: "Hi team, we're trying to set up our primary Snowflake production database as a new source in Atlan, but the connection keeps failing. We've tried using our standard service account, but it's not working. Our entire BI team is blocked on this integration for a major upcoming project, so it's quite urgent. Could you please provide a definitive list of the exact permissions and credentials needed on the Snowflake side to get this working? Thanks."
+            },
+            topic: "Connector",
+            sentiment: "Urgent",
+            priority: "P0",
+            reasoning: {
+                topic_explanation: "The ticket is focused on connecting Snowflake, which is a specific data connector, and addresses issues related to permissions and credentials.",
+                sentiment_explanation: "The customer expresses urgency due to their BI team being blocked on a critical integration for an upcoming project.",
+                priority_explanation: "This is a P0 issue as it is blocking a major project and requires immediate attention."
+            }
+        },
+        {
+            ticket: {
+                id: "TICKET-246",
+                subject: "Which connectors automatically capture lineage?",
+                body: "Hello, I'm new to Atlan and trying to understand the lineage capabilities. The documentation mentions automatic lineage, but it's not clear which of our connectors (we use Fivetran, dbt, and Tableau) support this out-of-the-box. We need to present a clear picture of our data flow to leadership next week. Can you explain how lineage capture differs for these tools?"
+            },
+            topic: "Lineage",
+            sentiment: "Curious",
+            priority: "P1",
+            reasoning: {
+                topic_explanation: "The ticket is specifically asking about lineage capabilities and which connectors support automatic lineage.",
+                sentiment_explanation: "The customer is learning-oriented and seeking clarification on product capabilities.",
+                priority_explanation: "This is informational and affects understanding but not blocking critical work."
+            }
+        },
+        {
+            ticket: {
+                id: "TICKET-247",
+                subject: "How to set up SSO with Azure AD?",
+                body: "We need to integrate Atlan with our Azure Active Directory for single sign-on. Can you provide step-by-step instructions for configuring SAML authentication? Our security team requires all applications to use centralized authentication, and we have about 200 users who need access to Atlan."
+            },
+            topic: "SSO",
+            sentiment: "Neutral",
+            priority: "P1",
+            reasoning: {
+                topic_explanation: "The ticket is asking about SSO configuration with Azure AD, which falls under the SSO category.",
+                sentiment_explanation: "Professional tone without urgency or frustration, seeking procedural guidance.",
+                priority_explanation: "Important for security and user experience but not critical blocking issue."
+            }
+        }
+    ];
+}
+
+// Handle load sample tickets (existing function with sidebar type handling)
+async function handleLoadSampleTickets() {
+    console.log('Loading sample tickets...');
+    showLoading();
+
+    try {
+        console.log('Making API call to:', `${appState.apiBaseUrl}/load-sample-tickets`);
+        const response = await fetch(`${appState.apiBaseUrl}/load-sample-tickets`);
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const raw = await response.json();
+        console.log('Received tickets:', raw);
+        appState.sampleTickets = normalizeTicketsResponse(raw);
+        displaySampleTickets();
+        openSampleSidebar(); // Use regular sidebar
+
+    } catch (error) {
+        console.error('Error loading sample tickets:', error);
+        appState.sampleTickets = getMockTickets();
+        displaySampleTickets();
+        openSampleSidebar();
+        showInfoMessage('Using sample tickets (API server not available)');
+    } finally {
+        hideLoading();
+    }
+}
+
+// NEW: Open regular sidebar for sample tickets
+function openSampleSidebar() {
+    elements.ticketsSidebar.classList.add('open');
+    elements.ticketsSidebar.classList.remove('wide'); // Remove wide class for sample tickets
+    
+    // Update sidebar header
+    const sidebarHeader = elements.ticketsSidebar.querySelector('.sidebar-header h3');
+    if (sidebarHeader) {
+        sidebarHeader.textContent = 'Sample Tickets';
+    }
+}
+
+// Display sample tickets (existing function)
+function displaySampleTickets() {
+    console.log('Displaying', appState.sampleTickets.length, 'tickets');
+    
+    if (appState.sampleTickets.length === 0) {
+        elements.ticketsList.innerHTML = '<div class="empty-state">No sample tickets found</div>';
+        return;
+    }
+
+    const ticketsHTML = appState.sampleTickets.map(ticket => `
+        <div class="ticket-card">
+            <div class="ticket-header">
+                <span class="ticket-id">${ticket.id}</span>
+            </div>
+            <div class="ticket-subject">${ticket.subject}</div>
+            <div class="ticket-body">${truncateText(ticket.body, 150)}</div>
+            <button class="btn btn--primary btn--sm send-ticket-btn" onclick="sendTicketToAgent('${ticket.id}')">
+                Send to Agent
+            </button>
+        </div>
+    `).join('');
+
+    elements.ticketsList.innerHTML = ticketsHTML;
+}
+
+// Send ticket to agent (existing function)
+async function sendTicketToAgent(ticketId) {
+    const ticket = appState.sampleTickets.find(t => t.id === ticketId);
+    if (!ticket) return;
+
+    const prompt = `Ticket ID: ${ticket.id}\nSubject: ${ticket.subject}\nBody: ${ticket.body}`;
+    
+    closeSidebar();
+    
+    // Clear welcome message if exists
+    const welcomeMessage = document.querySelector('.welcome-message');
+    if (welcomeMessage) {
+        welcomeMessage.remove();
+    }
+
+    // Add user message
+    addUserMessage(prompt);
+    
+    // Show loading state for assistant response
+    const assistantMessageElement = addAssistantMessage('', true);
+
+    try {
+        appState.isStreaming = true;
+        elements.sendButton.disabled = true;
+
+        // Call invoke API instead of stream for ticket processing
+        const payload = {
+            prompt: prompt,
+            session: appState.currentSession,
+            user_id: 'user-' + Date.now(),
+            organization_id: 'org-' + Date.now()
+        };
+
+        const response = await fetch(`${appState.apiBaseUrl}/stream`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        const result = await response.json();
+        updateAssistantMessage(assistantMessageElement, result.response || 'Ticket processed successfully.', true);
+
+    } catch (error) {
+        console.error('Error sending ticket to agent:', error);
+        updateAssistantMessage(assistantMessageElement, 'Error processing ticket. Please try again.', true);
+    } finally {
+        appState.isStreaming = false;
+        elements.sendButton.disabled = false;
+    }
+}
+
+// Mock tickets for testing (existing function)
+function getMockTickets() {
+    return [
+        {
+            id: "TICKET-001",
+            subject: "How to connect Snowflake to Atlan?",
+            body: "I need help setting up a Snowflake connection but getting authentication errors."
+        },
+        {
+            id: "TICKET-002",
+            subject: "Data lineage not showing",
+            body: "The lineage view is empty even though we have data flowing through our pipeline."
+        },
+        {
+            id: "TICKET-003",
+            subject: "User permissions issue",
+            body: "New team member can't access the datasets they need for their project."
+        }
+    ];
+}
+
+// Normalize tickets from various API shapes
+function normalizeTicketsResponse(rawResponse) {
+    try {
+        if (typeof rawResponse === 'string') {
+            const maybeParsed = JSON.parse(rawResponse);
+            return normalizeTicketsArray(maybeParsed);
+        }
+        return normalizeTicketsArray(rawResponse);
+    } catch (error) {
+        console.warn('Failed to parse tickets response, falling back to empty list:', error);
+        return [];
+    }
+}
+
+function normalizeTicketsArray(maybeArrayLike) {
+    let list = [];
+    if (Array.isArray(maybeArrayLike)) {
+        list = maybeArrayLike;
+    } else if (maybeArrayLike && Array.isArray(maybeArrayLike.tickets)) {
+        list = maybeArrayLike.tickets;
+    } else if (maybeArrayLike && Array.isArray(maybeArrayLike.data)) {
+        list = maybeArrayLike.data;
+    } else if (maybeArrayLike && typeof maybeArrayLike === 'object' && maybeArrayLike.items && Array.isArray(maybeArrayLike.items)) {
+        list = maybeArrayLike.items;
+    }
+
+    if (!Array.isArray(list)) return [];
+    return list.map(normalizeSingleTicket).filter(Boolean);
+}
+
+function normalizeSingleTicket(item) {
+    try {
+        if (typeof item === 'string') {
+            try {
+                const parsed = JSON.parse(item);
+                return coerceTicketShape(parsed);
+            } catch (_) {
+                return coerceTicketShape({ body: item });
+            }
+        }
+        if (item && typeof item === 'object') {
+            return coerceTicketShape(item);
+        }
+        return null;
+    } catch (error) {
+        console.warn('Failed to normalize ticket:', item, error);
+        return null;
+    }
+}
+
+function coerceTicketShape(source) {
+    const getProp = (obj, candidates) => {
+        for (const candidate of candidates) {
+            if (obj[candidate] != null) return obj[candidate];
+            const foundKey = Object.keys(obj).find(k => k.toLowerCase() === String(candidate).toLowerCase());
+            if (foundKey && obj[foundKey] != null) return obj[foundKey];
+        }
+        return undefined;
+    };
+
+    let id = getProp(source, ['id', 'ticket_id', 'ticketId', 'key', 'uid', 'identifier']);
+    let subject = getProp(source, ['subject', 'title', 'summary', 'heading']);
+    let body = getProp(source, ['body', 'description', 'content', 'message', 'text', 'details']);
+
+    const toStringSafe = (val) => (val == null ? '' : String(val)).trim();
+    id = toStringSafe(id);
+    subject = toStringSafe(subject);
+    body = toStringSafe(body);
+
+    if (!subject && body) {
+        subject = truncateText(body, 80);
+    }
+    if (!body && subject) {
+        body = subject;
+    }
+    if (!id) {
+        id = source.ticket_id || source.ticketId || source.id || `TICKET-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+        id = toStringSafe(id);
+    }
+
+    return {
+        id: id || 'Unknown ID',
+        subject: subject || 'No subject',
+        body: body || 'No description'
+    };
+}

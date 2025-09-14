@@ -1,0 +1,28 @@
+version: "3.9"
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: mongo_container
+    restart: always
+    ports:
+      - "27018:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password
+    volumes:
+      - mongo_data:/data/db
+
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   container_name: ollama_container
+  #   restart: always
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama_data:/root/.ollama
+  #   command: serve   # ✅ no bash, just start Ollama server
+
+volumes:
+  mongo_data:
+  # ollama_data:

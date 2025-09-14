@@ -32,11 +32,16 @@ const elements = {
     loadingOverlay: document.getElementById('loadingOverlay')
 };
 
+// Sidebar resize functionality
+let isResizing = false;
+let sidebarWidth = 400; // Default width
+
 // Initialize application
 document.addEventListener('DOMContentLoaded', function() {
     console.log('Application initializing...');
     initializeEventListeners();
     setupWelcomeMessage();
+    initializeResizableSidebar();
     hideLoading(); // Ensure loading overlay is hidden on startup
 });
 
@@ -234,15 +239,46 @@ function createMessageElement(content, sender, isStreaming = false) {
     return messageDiv;
 }
 
-// Format message content
+// Format message content with proper markdown rendering
 function formatMessage(content) {
     if (!content) return '';
-    // Simple markdown-like formatting
-    return content
-        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.*?)\*/g, '<em>$1</em>')
-        .replace(/`(.*?)`/g, '<code>$1</code>')
-        .replace(/\n/g, '<br>');
+    
+    try {
+        // Configure marked for GitHub-style markdown
+        marked.setOptions({
+            breaks: true, // Convert \n to <br>
+            gfm: true, // GitHub Flavored Markdown
+            headerIds: false, // Don't add IDs to headers
+            mangle: false, // Don't mangle email addresses
+            sanitize: false, // We'll use DOMPurify instead
+            smartLists: true,
+            smartypants: false,
+            xhtml: false
+        });
+        
+        // Parse markdown to HTML
+        const rawHtml = marked.parse(content);
+        
+        // Sanitize the HTML to prevent XSS attacks
+        const cleanHtml = DOMPurify.sanitize(rawHtml, {
+            ALLOWED_TAGS: [
+                'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+                'p', 'br', 'strong', 'b', 'em', 'i', 'u',
+                'ul', 'ol', 'li', 'blockquote',
+                'code', 'pre', 'a', 'img',
+                'table', 'thead', 'tbody', 'tr', 'th', 'td',
+                'hr', 'del', 'ins', 'mark', 'sub', 'sup'
+            ],
+            ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class', 'target'],
+            ALLOW_DATA_ATTR: false
+        });
+        
+        return cleanHtml;
+    } catch (error) {
+        console.error('Error parsing markdown:', error);
+        // Fallback to simple text with line breaks
+        return content.replace(/\n/g, '<br>');
+    }
 }
 
 // Update assistant message content
@@ -384,10 +420,17 @@ async function streamResponse(prompt, messageElement) {
 
     } catch (error) {
         console.error('Streaming error:', error);
-        updateAssistantMessage(messageElement, 
-            `Error: Unable to connect to the API server at ${appState.apiBaseUrl}. ` +
-            'Please ensure the server is running and try again. ' +
-            'You can test with mock data in the meantime.', true);
+        let errorMessage = 'Sorry, there was an error processing your request. ';
+        
+        if (error.name === 'TypeError' && error.message.includes('fetch')) {
+            errorMessage += `Unable to connect to the API server at ${appState.apiBaseUrl}. Please ensure the server is running and try again.`;
+        } else if (error.message.includes('HTTP error')) {
+            errorMessage += `Server returned an error: ${error.message}. Please try again.`;
+        } else {
+            errorMessage += 'Please check your connection and try again.';
+        }
+        
+        updateAssistantMessage(messageElement, errorMessage, true);
     }
 }
 
@@ -674,7 +717,7 @@ async function handleLoadClassifiedTickets() {
             throw new Error('Invalid response format from server');
         }
         
-        displayClassifiedTickets();
+        displayClassifiedTicketsEnhanced();
         openClassifiedSidebar(); // Use the wider sidebar
 
     } catch (error) {
@@ -692,7 +735,7 @@ async function handleLoadClassifiedTickets() {
         // Show mock classified tickets for demonstration
         console.log('Loading mock classified tickets...');
         appState.classifiedTickets = getMockClassifiedTickets();
-        displayClassifiedTickets();
+        displayClassifiedTicketsEnhanced();
         openClassifiedSidebar();
         showInfoMessage(errorMessage + ' Using sample data.');
     } finally {
@@ -704,6 +747,8 @@ async function handleLoadClassifiedTickets() {
 function openClassifiedSidebar() {
     elements.ticketsSidebar.classList.add('open');
     elements.ticketsSidebar.classList.add('wide'); // Add wide class for classified tickets
+    sidebarWidth = 600; // Set wider width for classified tickets
+    elements.ticketsSidebar.style.width = sidebarWidth + 'px';
 }
 
 // NEW: Display classified tickets with enhanced layout
@@ -915,26 +960,7 @@ async function sendClassifiedTicketToAgent(ticketId) {
         appState.isStreaming = true;
         elements.sendButton.disabled = true;
 
-        // Call invoke API for classified ticket processing
-        const payload = {
-            prompt: prompt,
-            session: appState.currentSession,
-            user_id: 'user-' + Date.now(),
-            organization_id: 'org-' + Date.now()
-        };
-
-        const response = await fetch(`${appState.apiBaseUrl}/stream`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(payload)
-        });
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        // Use streaming response instead of JSON for classified tickets
+        // Use streaming response for classified ticket processing
         await streamResponse(prompt, assistantMessageElement);
 
     } catch (error) {
@@ -1031,6 +1057,8 @@ async function handleLoadSampleTickets() {
 function openSampleSidebar() {
     elements.ticketsSidebar.classList.add('open');
     elements.ticketsSidebar.classList.remove('wide'); // Remove wide class for sample tickets
+    sidebarWidth = 400; // Set regular width for sample tickets
+    elements.ticketsSidebar.style.width = sidebarWidth + 'px';
     
     // Update sidebar header
     const sidebarHeader = elements.ticketsSidebar.querySelector('.sidebar-header h3');
@@ -1089,28 +1117,8 @@ async function sendTicketToAgent(ticketId) {
         appState.isStreaming = true;
         elements.sendButton.disabled = true;
 
-        // Call invoke API instead of stream for ticket processing
-        const payload = {
-            prompt: prompt,
-            session: appState.currentSession,
-            user_id: 'user-' + Date.now(),
-            organization_id: 'org-' + Date.now()
-        };
-
-        const response = await fetch(`${appState.apiBaseUrl}/stream`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(payload)
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-
-        const result = await response.json();
-        updateAssistantMessage(assistantMessageElement, result.response || 'Ticket processed successfully.', true);
+        // Use streaming response for ticket processing
+        await streamResponse(prompt, assistantMessageElement);
 
     } catch (error) {
         console.error('Error sending ticket to agent:', error);
@@ -1227,4 +1235,187 @@ function coerceTicketShape(source) {
         subject: subject || 'No subject',
         body: body || 'No description'
     };
+}
+
+// Initialize resizable sidebar functionality
+function initializeResizableSidebar() {
+    // Create resize handle
+    const resizeHandle = document.createElement('div');
+    resizeHandle.className = 'sidebar-resize-handle';
+    elements.ticketsSidebar.appendChild(resizeHandle);
+
+    // Mouse events for resizing
+    resizeHandle.addEventListener('mousedown', startResize);
+    document.addEventListener('mousemove', doResize);
+    document.addEventListener('mouseup', stopResize);
+
+    function startResize(e) {
+        isResizing = true;
+        resizeHandle.classList.add('dragging');
+        document.body.style.cursor = 'col-resize';
+        document.body.style.userSelect = 'none';
+        e.preventDefault();
+    }
+
+    function doResize(e) {
+        if (!isResizing) return;
+        
+        const newWidth = window.innerWidth - e.clientX;
+        const minWidth = 300;
+        const maxWidth = Math.min(800, window.innerWidth * 0.8);
+        
+        if (newWidth >= minWidth && newWidth <= maxWidth) {
+            sidebarWidth = newWidth;
+            elements.ticketsSidebar.style.width = sidebarWidth + 'px';
+            
+            // Update CSS custom property for transitions
+            elements.ticketsSidebar.style.setProperty('--sidebar-width', sidebarWidth + 'px');
+        }
+    }
+
+    function stopResize() {
+        if (isResizing) {
+            isResizing = false;
+            resizeHandle.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+        }
+    }
+
+    // Touch events for mobile
+    resizeHandle.addEventListener('touchstart', startResizeTouch);
+    document.addEventListener('touchmove', doResizeTouch);
+    document.addEventListener('touchend', stopResize);
+
+    function startResizeTouch(e) {
+        isResizing = true;
+        resizeHandle.classList.add('dragging');
+        e.preventDefault();
+    }
+
+    function doResizeTouch(e) {
+        if (!isResizing || !e.touches[0]) return;
+        
+        const touch = e.touches[0];
+        const newWidth = window.innerWidth - touch.clientX;
+        const minWidth = 300;
+        const maxWidth = Math.min(800, window.innerWidth * 0.8);
+        
+        if (newWidth >= minWidth && newWidth <= maxWidth) {
+            sidebarWidth = newWidth;
+            elements.ticketsSidebar.style.width = sidebarWidth + 'px';
+        }
+    }
+}
+
+// Enhanced classified ticket display with animations
+function displayClassifiedTicketsEnhanced() {
+    console.log('Displaying', appState.classifiedTickets.length, 'classified tickets with enhanced UI');
+    
+    // Update sidebar header with animation
+    const sidebarHeader = elements.ticketsSidebar.querySelector('.sidebar-header h3');
+    if (sidebarHeader) {
+        sidebarHeader.style.opacity = '0';
+        setTimeout(() => {
+            sidebarHeader.textContent = 'Classified Tickets';
+            sidebarHeader.style.opacity = '1';
+        }, 150);
+    }
+    
+    if (appState.classifiedTickets.length === 0) {
+        elements.ticketsList.innerHTML = '<div class="empty-state">No classified tickets found</div>';
+        return;
+    }
+
+    // Add staggered animation to cards
+    const ticketsHTML = appState.classifiedTickets.map((classifiedTicket, index) => {
+        const ticket = classifiedTicket.ticket;
+        const topicColor = getTopicColor(classifiedTicket.topic);
+        const sentimentColor = getSentimentColor(classifiedTicket.sentiment);
+        const priorityColor = getPriorityColor(classifiedTicket.priority);
+        
+        return `
+            <div class="classified-ticket-card" style="animation-delay: ${index * 100}ms">
+                <div class="classified-ticket-header">
+                    <div class="ticket-id-container">
+                        <span class="ticket-id">${ticket.id}</span>
+                    </div>
+                    <div class="classification-tags">
+                        <span class="tag topic-tag" style="background-color: ${topicColor}">
+                            <span class="tag-icon">🏷️</span>
+                            ${classifiedTicket.topic}
+                        </span>
+                        <span class="tag sentiment-tag" style="background-color: ${sentimentColor}">
+                            <span class="tag-icon">😊</span>
+                            ${classifiedTicket.sentiment}
+                        </span>
+                        <span class="tag priority-tag" style="background-color: ${priorityColor}">
+                            <span class="tag-icon">⚡</span>
+                            ${classifiedTicket.priority}
+                        </span>
+                    </div>
+                </div>
+                
+                <div class="ticket-content">
+                    <h4 class="ticket-subject">${ticket.subject}</h4>
+                    <div class="ticket-body-preview">
+                        ${truncateText(ticket.body, 200)}
+                        ${ticket.body.length > 200 ? '<button class="expand-body-btn" onclick="toggleBodyExpansion(this)">Show more</button>' : ''}
+                    </div>
+                    <div class="ticket-body-full" style="display: none;">
+                        ${ticket.body}
+                        <button class="collapse-body-btn" onclick="toggleBodyExpansion(this)">Show less</button>
+                    </div>
+                </div>
+                
+                <div class="classification-analysis">
+                    <div class="analysis-section">
+                        <div class="analysis-header">
+                            <span class="analysis-icon">🎯</span>
+                            <strong>Topic Analysis</strong>
+                        </div>
+                        <div class="analysis-content">${classifiedTicket.reasoning?.topic_explanation || 'No explanation provided'}</div>
+                    </div>
+                    
+                    <div class="analysis-section">
+                        <div class="analysis-header">
+                            <span class="analysis-icon">💭</span>
+                            <strong>Sentiment Analysis</strong>
+                        </div>
+                        <div class="analysis-content">${classifiedTicket.reasoning?.sentiment_explanation || 'No explanation provided'}</div>
+                    </div>
+                    
+                    <div class="analysis-section">
+                        <div class="analysis-header">
+                            <span class="analysis-icon">📊</span>
+                            <strong>Priority Analysis</strong>
+                        </div>
+                        <div class="analysis-content">${classifiedTicket.reasoning?.priority_explanation || 'No explanation provided'}</div>
+                    </div>
+                </div>
+                
+                <div class="ticket-actions">
+                    <button class="btn btn--primary btn--sm send-ticket-btn" onclick="sendClassifiedTicketToAgent('${ticket.id}')">
+                        <span class="btn-icon">🚀</span>
+                        Send to Agent
+                    </button>
+                    <button class="btn btn--secondary btn--sm" onclick="copyTicketDetails('${ticket.id}')">
+                        <span class="btn-icon">📋</span>
+                        Copy Details
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    elements.ticketsList.innerHTML = ticketsHTML;
+    
+    // Trigger animation
+    setTimeout(() => {
+        const cards = elements.ticketsList.querySelectorAll('.classified-ticket-card');
+        cards.forEach(card => {
+            card.style.opacity = '1';
+            card.style.transform = 'translateY(0)';
+        });
+    }, 50);
 }

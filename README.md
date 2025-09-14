@@ -84,7 +84,7 @@ Priority Assignment (P0/P1/P2) + SLA Mapping
 
 ### Prerequisites
 
-- Python 3.12+
+- Python 3.12+ (python 3.12.6 recommended)
 - OpenAI API Key
 - MongoDB (optional, for conversation memory)
 

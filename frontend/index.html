@@ -5,6 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Customer Support Copilot</title>
     <link rel="stylesheet" href="style.css">
+<!-- GitHub Markdown CSS -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.5.1/github-markdown.min.css">
+
+<!-- Highlight.js styles -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+
+<!-- Marked.js -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+<!-- DOMPurify -->
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js"></script>
+
+<!-- Highlight.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
+
 </head>
 <body>
     <div class="app-container">
@@ -123,7 +139,32 @@
             </div>
         </div>
     </div>
-
+    <script>
+        // Configure marked with highlight.js integration
+        marked.setOptions({
+            highlight: function (code, lang) {
+                if (lang && hljs.getLanguage(lang)) {
+                    try {
+                        return hljs.highlight(code, { language: lang }).value;
+                    } catch (err) {
+                        console.warn('Highlight.js error:', err);
+                    }
+                }
+                try {
+                    return hljs.highlightAuto(code).value;
+                } catch (err) {
+                    console.warn('Highlight.js auto error:', err);
+                    return code; // Return plain code if highlighting fails
+                }
+            },
+            langPrefix: 'hljs language-' // Add proper CSS classes for highlight.js
+        });
+        
+        // Initialize highlight.js for any existing code blocks
+        document.addEventListener('DOMContentLoaded', function() {
+            hljs.highlightAll();
+        });
+    </script>
     <script src="app.js"></script>
 </body>
 </html>

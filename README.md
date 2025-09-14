@@ -26,7 +26,7 @@ This Customer Support Copilot revolutionizes support operations by automatically
 | **FastAPI App** | REST API & Streaming endpoints | FastAPI, Uvicorn, CORS |
 | **LangGraph Agent** | Conversational AI orchestration | LangGraph, OpenAI |
 | **Classification Engine** | Ticket categorization & priority | OpenAI GPT-4o-mini |
-| **RAG Pipeline** | Knowledge retrieval & response generation | ChromaDB, all-MiniLM-L6-v2, OpenAI |
+| **RAG Pipeline** | Knowledge retrieval & response generation | Pinecone, all-MiniLM-L6-v2, OpenAI |
 | **Memory Management** | Conversation persistence | MongoDB |
 | **Knowledge Base** | Atlan documentation corpus | 1000+ preprocessed files |
 
@@ -42,7 +42,7 @@ This Customer Support Copilot revolutionizes support operations by automatically
 - **Rationale**: Consistent structured outputs for classification, high-quality response generation with source citations
 - **Trade-off**: API dependency vs. reduced infrastructure complexity
 
-**Decision**: **ChromaDB + all-MiniLM-L6-v2 for Vector Search**
+**Decision**: **Pinecone + all-MiniLM-L6-v2 for Vector Search**
 - **Rationale**: Local deployment, fast semantic search, reliable embedding model for technical documentation
 - **Trade-off**: Initial setup complexity vs. runtime independence and cost control
 
@@ -64,7 +64,7 @@ Incoming Ticket
      ↓
 Classification Engine (Priority + Topic + Sentiment + Reasoning)
      ↓
-RAG Pipeline (Knowledge Retrieval from ChromaDB)
+RAG Pipeline (Knowledge Retrieval from Pinecone)
      ↓
 OpenAI Response Generation (Source + Query → Detailed Response)
      ↓
@@ -132,9 +132,21 @@ OPENAI_MODEL=gpt-4o-mini
 # Optional (for conversation memory)
 MONGO_DB_URI=mongodb://admin:password@localhost:27018/
 CHROMA_DB_COLLECTION=atlan-copilot
+
+OPENAI_API_KEY = your_openai_api_key_here
+OPENAI_MODEL = gpt-4o-mini
+MONGO_DB_URI = mongodb://admin:password@localhost:27018/admin
+
+CHROMA_DB_COLLECTION = atlan-copilot
+
+PINECONE_API = 
+PINECONE_INDEX_NAME=
+PINECONE_ENVIRONMENT=
+PINECONE_HOST=
+PINECONE_CLOUD=
 ```
 
-### Creating the embeddings
+### Creating the embeddings (Optional only when you're using your own pinecone)
 To create the embeddings of atlan's docuemntations on local machine, run this command
 ```bash
 python3 rag/create_embeddings.py
@@ -273,7 +285,7 @@ The system employs a unified processing approach for all tickets:
 **All tickets follow the same processing flow:**
 
 1. **Classification Stage**: Extract topic, sentiment, priority, and reasoning
-2. **Knowledge Retrieval**: Search ChromaDB vector store using all-MiniLM-L6-v2 embeddings
+2. **Knowledge Retrieval**: Search Pinecone vector store using all-MiniLM-L6-v2 embeddings
 3. **Response Generation**: OpenAI processes retrieved sources + user query for detailed response
 4. **Source Citation**: Include documentation URLs used in response generation
 
@@ -367,7 +379,7 @@ curl http://localhost:8003/load-classified-tickets
 - [Developer Hub](https://developer.atlan.com/) - 600+ files
 
 **Embedding Model**: `all-MiniLM-L6-v2` (sentence-transformers)
-**Vector Database**: ChromaDB with persistent storage
+**Vector Database**: Pinecone with persistent storage
 **Search Method**: Semantic similarity search with cosine similarity
 
 ## Contributing
@@ -384,4 +396,4 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ---
 
-**Built with**: FastAPI • LangGraph • OpenAI • ChromaDB • MongoDB • Sentence Transformers
+**Built with**: FastAPI • LangGraph • OpenAI • Pinecone • MongoDB • Sentence Transformers

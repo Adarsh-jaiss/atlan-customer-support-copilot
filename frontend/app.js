@@ -5,7 +5,8 @@ const appState = {
     classifiedTickets: [], // Add storage for classified tickets
     currentSession: generateSessionId(),
     isStreaming: false,
-    apiBaseUrl: 'http://localhost:8003'
+    // apiBaseUrl: 'http://localhost:8003'
+    apiBaseUrl: 'https://api.adarshjaiswal.xyz'
 };
 
 // Generate unique session ID
@@ -301,6 +302,35 @@ function updateAssistantMessage(messageElement, content, isComplete = false) {
     scrollToBottom();
 }
 
+// Validate JSON chunk to prevent processing corrupted data
+function isValidJSONChunk(data) {
+    if (!data || typeof data !== 'string') return false;
+    
+    const trimmed = data.trim();
+    if (!trimmed) return false;
+    
+    // Must start and end with proper JSON delimiters
+    if (!trimmed.startsWith('{') || !trimmed.endsWith('}')) {
+        return false;
+    }
+    
+    // Basic validation for required JSON structure
+    try {
+        // Quick parse test - if it throws, it's not valid JSON
+        const parsed = JSON.parse(trimmed);
+        
+        // Must be an object with at least an id or type field
+        if (typeof parsed !== 'object' || parsed === null) {
+            return false;
+        }
+        
+        // Should have some expected fields for our streaming format
+        return parsed.hasOwnProperty('id') || parsed.hasOwnProperty('type') || parsed.hasOwnProperty('category');
+    } catch (e) {
+        return false;
+    }
+}
+
 // Enhanced stream response handler for backend's ChunkPayload format
 async function streamResponse(prompt, messageElement) {
     console.log('Starting stream response for prompt:', prompt);
@@ -332,18 +362,30 @@ async function streamResponse(prompt, messageElement) {
         let toolCallArtifact = messageElement.querySelector('.artifact'); // Use existing artifact
         let toolCallsData = new Map(); // Use Map for better tool call tracking
         let reasoningData = [];
+        let buffer = ''; // Buffer for incomplete chunks
 
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
 
-            const chunk = decoder.decode(value);
-            const lines = chunk.split('\n');
+            const chunk = decoder.decode(value, { stream: true });
+            buffer += chunk;
+            
+            // Process complete lines only
+            const lines = buffer.split('\n');
+            // Keep the last potentially incomplete line in the buffer
+            buffer = lines.pop() || '';
 
             for (const line of lines) {
                 if (line.startsWith('data: ')) {
                     const data = line.slice(6);
                     if (data === '[DONE]' || data.trim() === '') {
+                        continue;
+                    }
+
+                    // Validate that the data looks like complete JSON before parsing
+                    if (!isValidJSONChunk(data)) {
+                        console.warn('Skipping invalid or incomplete JSON chunk:', data);
                         continue;
                     }
 
@@ -474,12 +516,34 @@ async function streamResponse(prompt, messageElement) {
 
                     } catch (e) {
                         console.warn('Failed to parse chunk as JSON:', data, e);
-                        // Fallback: treat as plain text if it's not empty
-                        if (data.trim()) {
+                        // Don't treat malformed JSON as plain text content
+                        // Only process valid text that doesn't look like corrupted JSON
+                        if (data.trim() && !data.includes('{"id":"') && !data.includes('"type":"') && !data.includes('"content":')) {
+                            // This appears to be legitimate text content, not corrupted JSON
                             accumulatedContent += data;
                             updateAssistantMessage(messageElement, accumulatedContent);
                         }
+                        // Otherwise, silently ignore corrupted JSON fragments
                     }
+                }
+            }
+        }
+
+        // Process any remaining data in the buffer
+        if (buffer.trim() && buffer.startsWith('data: ')) {
+            const data = buffer.slice(6);
+            if (data !== '[DONE]' && data.trim() !== '' && isValidJSONChunk(data)) {
+                try {
+                    const parsed = JSON.parse(data);
+                    console.log('Processing final buffered chunk:', parsed);
+                    
+                    const { id, content, type, category } = parsed;
+                    if (category === 'text.chunk' && content && typeof content === 'string') {
+                        accumulatedContent += content;
+                        updateAssistantMessage(messageElement, accumulatedContent);
+                    }
+                } catch (e) {
+                    console.warn('Failed to parse final buffered chunk:', data, e);
                 }
             }
         }

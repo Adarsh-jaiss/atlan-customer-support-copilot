@@ -177,6 +177,9 @@ async function handleSendMessage() {
         appState.isStreaming = true;
         elements.sendButton.disabled = true;
 
+        // Always create artifact for AI analysis visibility
+        const analysisArtifact = createSingleToolCallArtifact(assistantMessageElement);
+
         // Call streaming API
         await streamResponse(prompt, assistantMessageElement);
     } catch (error) {
@@ -298,7 +301,7 @@ function updateAssistantMessage(messageElement, content, isComplete = false) {
     scrollToBottom();
 }
 
-// Stream response from API with single artifact for tool calls
+// Enhanced stream response handler for backend's ChunkPayload format
 async function streamResponse(prompt, messageElement) {
     console.log('Starting stream response for prompt:', prompt);
     
@@ -326,8 +329,9 @@ async function streamResponse(prompt, messageElement) {
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let accumulatedContent = '';
-        let toolCallArtifact = null; // Single artifact for all tool calls
-        let toolCallsData = []; // Array to store all tool call data
+        let toolCallArtifact = messageElement.querySelector('.artifact'); // Use existing artifact
+        let toolCallsData = new Map(); // Use Map for better tool call tracking
+        let reasoningData = [];
 
         while (true) {
             const { done, value } = await reader.read();
@@ -339,71 +343,138 @@ async function streamResponse(prompt, messageElement) {
             for (const line of lines) {
                 if (line.startsWith('data: ')) {
                     const data = line.slice(6);
-                    if (data === '[DONE]') {
-                        updateAssistantMessage(messageElement, accumulatedContent, true);
-                        if (toolCallArtifact) {
-                            updateToolCallArtifact(toolCallArtifact, toolCallsData, true);
-                        }
-                        return;
+                    if (data === '[DONE]' || data.trim() === '') {
+                        continue;
                     }
 
                     try {
                         const parsed = JSON.parse(data);
+                        console.log('Parsed chunk:', parsed);
                         
-                        // Handle text content
-                        if (parsed.content !== undefined && parsed.content !== null) {
-                            if (typeof parsed.content === 'string') {
-                                accumulatedContent += parsed.content;
-                                updateAssistantMessage(messageElement, accumulatedContent);
-                            }
+                        // Handle different chunk types based on backend's ChunkPayload format
+                        const { id, content, type, category } = parsed;
+                        
+                        // Log for debugging
+                        if (category !== 'text.chunk') {
+                            console.log(`Processing chunk - Category: ${category}, Type: ${type}, ID: ${id}`, content);
                         }
-
-                        // Handle tool calls - create single artifact if not exists
-                        if (parsed.tool_calls) {
-                            if (!toolCallArtifact) {
-                                toolCallArtifact = createSingleToolCallArtifact(messageElement);
-                            }
-                            
-                            // Add tool calls to our data array
-                            const toolCallsArray = Array.isArray(parsed.tool_calls) ? parsed.tool_calls : [parsed.tool_calls];
-                            toolCallsArray.forEach(toolCall => {
-                                const existingIndex = toolCallsData.findIndex(tc => tc.id === toolCall.id);
-                                if (existingIndex >= 0) {
-                                    toolCallsData[existingIndex] = { ...toolCallsData[existingIndex], ...toolCall };
-                                } else {
-                                    toolCallsData.push({ 
-                                        ...toolCall, 
-                                        status: 'calling',
-                                        timestamp: new Date().toISOString()
+                        
+                        switch (category) {
+                            case 'text.chunk':
+                                // Regular text content from the AI - stream it character by character for effect
+                                if (content && typeof content === 'string') {
+                                    // Add streaming effect for better UX
+                                    await streamTextContent(content, (text) => {
+                                        accumulatedContent += text;
+                                updateAssistantMessage(messageElement, accumulatedContent);
                                     });
                                 }
-                            });
-                            
-                            updateToolCallArtifact(toolCallArtifact, toolCallsData);
-                        }
-
-                        // Handle tool call results/responses
-                        if (parsed.tool_call_results || parsed.tool_responses) {
-                            if (toolCallArtifact) {
-                                const results = parsed.tool_call_results || parsed.tool_responses;
-                                const resultsArray = Array.isArray(results) ? results : [results];
+                                break;
                                 
-                                resultsArray.forEach(result => {
-                                    const toolCallIndex = toolCallsData.findIndex(tc => 
-                                        tc.id === result.tool_call_id || tc.name === result.tool_name
-                                    );
-                                    if (toolCallIndex >= 0) {
-                                        toolCallsData[toolCallIndex].result = result.content || result.result;
-                                        toolCallsData[toolCallIndex].status = 'completed';
+                            case 'reasoning':
+                                // Tool call results and reasoning
+                                if (content && content.name) {
+                                    if (!toolCallArtifact) {
+                                        toolCallArtifact = messageElement.querySelector('.artifact');
                                     }
-                                });
+                                    
+                                    // Update or create tool call entry
+                                    const toolCall = toolCallsData.get(id) || {
+                                        id: id,
+                                        name: content.name,
+                                        status: 'completed',
+                                        timestamp: new Date().toISOString(),
+                                        result: content.content,
+                                        artifact: content.artifact
+                                    };
+                                    
+                                    toolCall.result = content.content;
+                                    toolCall.status = 'completed';
+                                    toolCallsData.set(id, toolCall);
+                                    
+                                    updateToolCallArtifact(toolCallArtifact, Array.from(toolCallsData.values()));
+                                }
+                                break;
                                 
-                                updateToolCallArtifact(toolCallArtifact, toolCallsData);
-                            }
+                            case 'reasoning.chunk':
+                                // Streaming reasoning content
+                                if (content && content.name) {
+                            if (!toolCallArtifact) {
+                                        toolCallArtifact = messageElement.querySelector('.artifact');
+                                    }
+                                    
+                                    // Update or create tool call entry
+                                    let toolCall = toolCallsData.get(id);
+                                    if (!toolCall) {
+                                        toolCall = {
+                                            id: id,
+                                            name: content.name,
+                                        status: 'calling',
+                                            timestamp: new Date().toISOString(),
+                                            result: ''
+                                        };
+                                        toolCallsData.set(id, toolCall);
+                                    }
+                                    
+                                    // Append streaming content with typing effect
+                                    if (content.content) {
+                                        const newContent = content.content;
+                                        await streamToolResult(newContent, (text) => {
+                                            toolCall.result = (toolCall.result || '') + text;
+                                            updateToolCallArtifact(toolCallArtifact, Array.from(toolCallsData.values()));
+                                        });
+                                    }
+                                }
+                                break;
+                                
+                            case 'interrupt':
+                                // Handle interrupts (tool calls starting)
+                                if (content) {
+                                    if (!toolCallArtifact) {
+                                        toolCallArtifact = messageElement.querySelector('.artifact');
+                                    }
+                                    
+                                    // Handle tool_calls array
+                                    if (content.tool_calls) {
+                                        content.tool_calls.forEach(toolCall => {
+                                            const toolData = {
+                                                id: toolCall.id,
+                                                name: toolCall.function?.name || toolCall.name,
+                                                args: toolCall.function?.arguments || toolCall.args,
+                                                status: 'calling',
+                                                timestamp: new Date().toISOString()
+                                            };
+                                            toolCallsData.set(toolCall.id, toolData);
+                                        });
+                                    }
+                                    // Handle single tool call
+                                    else if (content.name || content.function) {
+                                        const toolData = {
+                                            id: id,
+                                            name: content.function?.name || content.name,
+                                            args: content.function?.arguments || content.args,
+                                            status: 'calling',
+                                            timestamp: new Date().toISOString()
+                                        };
+                                        toolCallsData.set(id, toolData);
+                                    }
+                                    
+                                    updateToolCallArtifact(toolCallArtifact, Array.from(toolCallsData.values()));
+                                }
+                                break;
+                                
+                            default:
+                                // Handle any other content types
+                                if (content && typeof content === 'string') {
+                                    accumulatedContent += content;
+                                    updateAssistantMessage(messageElement, accumulatedContent);
+                                }
+                                break;
                         }
 
                     } catch (e) {
-                        // Non-JSON data, treat as plain text
+                        console.warn('Failed to parse chunk as JSON:', data, e);
+                        // Fallback: treat as plain text if it's not empty
                         if (data.trim()) {
                             accumulatedContent += data;
                             updateAssistantMessage(messageElement, accumulatedContent);
@@ -413,9 +484,16 @@ async function streamResponse(prompt, messageElement) {
             }
         }
 
+        // Finalize the response
         updateAssistantMessage(messageElement, accumulatedContent || 'Response completed.', true);
-        if (toolCallArtifact) {
-            updateToolCallArtifact(toolCallArtifact, toolCallsData, true);
+        if (toolCallArtifact && toolCallsData.size > 0) {
+            // Mark all tool calls as completed
+            toolCallsData.forEach(toolCall => {
+                if (toolCall.status === 'calling') {
+                    toolCall.status = 'completed';
+                }
+            });
+            updateToolCallArtifact(toolCallArtifact, Array.from(toolCallsData.values()), true);
         }
 
     } catch (error) {
@@ -434,69 +512,236 @@ async function streamResponse(prompt, messageElement) {
     }
 }
 
-// Create single tool call artifact
+// Stream text content with typing effect
+async function streamTextContent(content, callback) {
+    const words = content.split(' ');
+    for (let i = 0; i < words.length; i++) {
+        const word = words[i] + (i < words.length - 1 ? ' ' : '');
+        callback(word);
+        // Add small delay for streaming effect
+        await new Promise(resolve => setTimeout(resolve, 20));
+    }
+}
+
+// Stream tool result content with typing effect
+async function streamToolResult(content, callback) {
+    const chunks = content.match(/.{1,10}/g) || [content]; // Split into chunks of 10 characters
+    for (const chunk of chunks) {
+        callback(chunk);
+        // Faster streaming for tool results
+        await new Promise(resolve => setTimeout(resolve, 10));
+    }
+}
+
+// Create enhanced tool call artifact with better UI
 function createSingleToolCallArtifact(messageElement) {
     const contentDiv = messageElement.querySelector('.message-content');
     
     const artifact = document.createElement('div');
-    artifact.className = 'artifact';
+    artifact.className = 'artifact enhanced-artifact';
     
     const header = document.createElement('div');
     header.className = 'artifact-header expanded';
     header.innerHTML = `
-        <span class="artifact-icon">🔧</span>
-        Agent Analysis
-        <span class="artifact-toggle">▼</span>
+        <div class="artifact-header-content">
+            <div class="artifact-icon-wrapper">
+                <span class="artifact-icon">🧠</span>
+                <div class="artifact-pulse"></div>
+            </div>
+            <div class="artifact-title-section">
+                <h4 class="artifact-title">AI Internal Analysis</h4>
+                <p class="artifact-subtitle">Tool calls, reasoning, and backend processing</p>
+            </div>
+        </div>
+        <div class="artifact-controls">
+            <span class="artifact-status processing">Processing...</span>
+            <button class="artifact-toggle" aria-label="Toggle analysis view">
+                <svg class="toggle-icon" viewBox="0 0 24 24" width="16" height="16">
+                    <path d="M7 14l5-5 5 5z" fill="currentColor"/>
+                </svg>
+            </button>
+        </div>
     `;
     
     const content = document.createElement('div');
     content.className = 'artifact-content expanded';
-    content.innerHTML = '<div class="tool-calls-container">Analyzing your request...</div>';
+    content.innerHTML = `
+        <div class="analysis-sections">
+            <div class="reasoning-section">
+                <div class="section-header">
+                    <span class="section-icon">💭</span>
+                    <h5>AI Reasoning</h5>
+                </div>
+                <div class="reasoning-content">
+                    <div class="thinking-indicator">
+                        <div class="thinking-dots">
+                            <span></span><span></span><span></span>
+                        </div>
+                        <span class="thinking-text">Analyzing your request...</span>
+                    </div>
+                </div>
+            </div>
+            <div class="tool-calls-section">
+                <div class="section-header">
+                    <span class="section-icon">🔧</span>
+                    <h5>Tool Execution</h5>
+                </div>
+                <div class="tool-calls-container">
+                    <div class="no-tools-message">No tool calls yet...</div>
+                </div>
+            </div>
+        </div>
+    `;
     
-    header.addEventListener('click', () => {
-        header.classList.toggle('expanded');
-        content.classList.toggle('expanded');
-        const toggle = header.querySelector('.artifact-toggle');
-        toggle.textContent = header.classList.contains('expanded') ? '▼' : '▶';
+    // Enhanced toggle functionality with smooth animations
+    header.addEventListener('click', (e) => {
+        if (e.target.closest('.artifact-toggle')) {
+            toggleArtifact(artifact);
+        }
     });
     
     artifact.appendChild(header);
     artifact.appendChild(content);
     contentDiv.appendChild(artifact);
     
+    // Add entrance animation
+    setTimeout(() => {
+        artifact.classList.add('artifact-visible');
+    }, 100);
+    
     scrollToBottom();
     return artifact;
 }
 
-// Update single tool call artifact with all tool call data
-function updateToolCallArtifact(artifact, toolCallsData, isComplete = false) {
+// Enhanced artifact toggle with smooth animations
+function toggleArtifact(artifact) {
+    const header = artifact.querySelector('.artifact-header');
     const content = artifact.querySelector('.artifact-content');
-    const container = content.querySelector('.tool-calls-container');
+    const toggle = header.querySelector('.artifact-toggle');
+    const isExpanded = header.classList.contains('expanded');
+    
+    if (isExpanded) {
+        // Collapse
+        content.style.maxHeight = content.scrollHeight + 'px';
+        content.offsetHeight; // Force reflow
+        content.style.maxHeight = '0';
+        header.classList.remove('expanded');
+        content.classList.remove('expanded');
+        toggle.classList.add('collapsed');
+    } else {
+        // Expand
+        content.classList.add('expanded');
+        header.classList.add('expanded');
+        content.style.maxHeight = content.scrollHeight + 'px';
+        toggle.classList.remove('collapsed');
+        
+        // Reset max-height after animation
+        setTimeout(() => {
+            if (content.classList.contains('expanded')) {
+                content.style.maxHeight = 'none';
+            }
+        }, 300);
+    }
+}
+
+// Update enhanced tool call artifact with better visualization
+function updateToolCallArtifact(artifact, toolCallsData, isComplete = false) {
+    const container = artifact.querySelector('.tool-calls-container');
+    const statusElement = artifact.querySelector('.artifact-status');
+    const reasoningContent = artifact.querySelector('.reasoning-content');
+    
+    // Update overall status
+    if (isComplete) {
+        statusElement.textContent = 'Complete';
+        statusElement.className = 'artifact-status complete';
+        // Remove thinking indicator
+        const thinkingIndicator = reasoningContent?.querySelector('.thinking-indicator');
+        if (thinkingIndicator) {
+            thinkingIndicator.style.opacity = '0';
+            setTimeout(() => thinkingIndicator.remove(), 300);
+        }
+    } else {
+        statusElement.textContent = 'Processing...';
+        statusElement.className = 'artifact-status processing';
+    }
+    
+    // Update tool calls
+    if (!toolCallsData || toolCallsData.length === 0) {
+        container.innerHTML = '<div class="no-tools-message">Waiting for tool calls...</div>';
+        return;
+    }
     
     let html = '';
     
     toolCallsData.forEach((toolCall, index) => {
         const status = toolCall.status || 'calling';
-        const statusIcon = status === 'completed' ? '✅' : status === 'calling' ? '⏳' : '🔄';
-        const functionName = toolCall.function?.name || toolCall.name || 'Unknown Function';
-        const args = toolCall.function?.arguments || toolCall.args || '{}';
+        const statusIcon = getStatusIcon(status);
+        const functionName = toolCall.name || 'Unknown Function';
+        const args = toolCall.args || '{}';
+        const duration = toolCall.duration || calculateDuration(toolCall.timestamp);
+        
+        // Parse arguments safely
+        let parsedArgs = {};
+        try {
+            parsedArgs = typeof args === 'string' ? JSON.parse(args) : args;
+        } catch (e) {
+            parsedArgs = { raw: args };
+        }
         
         html += `
-            <div class="tool-call-item ${status}">
-                <div class="tool-call-header">
-                    <span class="tool-call-status">${statusIcon}</span>
-                    <span class="tool-call-name">${functionName}</span>
-                    <span class="tool-call-time">${new Date(toolCall.timestamp).toLocaleTimeString()}</span>
+            <div class="enhanced-tool-call-item ${status}" data-tool-id="${toolCall.id || index}">
+                <div class="tool-call-header" onclick="toggleToolDetails(this.parentElement)">
+                    <div class="tool-status-indicator">
+                        <span class="status-icon">${statusIcon}</span>
+                        <div class="status-pulse ${status}"></div>
                 </div>
-                <div class="tool-call-details">
-                    <div class="tool-call-args">
-                        <strong>Arguments:</strong>
-                        <pre><code>${safeJSONStringify(typeof args === 'string' ? JSON.parse(args) : args, 2)}</code></pre>
+                    <div class="tool-info">
+                        <h6 class="tool-name">${functionName}</h6>
+                        <div class="tool-meta">
+                            <span class="tool-time">${new Date(toolCall.timestamp).toLocaleTimeString()}</span>
+                            ${duration ? `<span class="tool-duration">${duration}</span>` : ''}
                     </div>
+                    </div>
+                    <button class="tool-expand-btn" onclick="event.stopPropagation(); toggleToolDetails(this.closest('.enhanced-tool-call-item'))">
+                        <svg viewBox="0 0 24 24" width="16" height="16">
+                            <path d="M7 14l5-5 5 5z" fill="currentColor"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="tool-call-details collapsed">
+                    ${Object.keys(parsedArgs).length > 0 ? `
+                        <div class="tool-section">
+                            <div class="section-label">
+                                <span class="label-icon">📝</span>
+                                <strong>Function Arguments</strong>
+                            </div>
+                            <div class="args-container">
+                                <pre class="json-display"><code>${safeJSONStringify(parsedArgs, 2)}</code></pre>
+                            </div>
+                        </div>
+                    ` : ''}
                     ${toolCall.result ? `
-                        <div class="tool-call-result">
-                            <strong>Result:</strong>
-                            <div class="tool-result-content">${formatToolResult(toolCall.result)}</div>
+                        <div class="tool-section">
+                            <div class="section-label">
+                                <span class="label-icon">📊</span>
+                                <strong>Execution Result</strong>
+                            </div>
+                            <div class="result-container">
+                                ${formatEnhancedToolResult(toolCall.result)}
+                            </div>
+                        </div>
+                    ` : status === 'calling' ? `
+                        <div class="tool-section">
+                            <div class="section-label">
+                                <span class="label-icon">⏳</span>
+                                <strong>Status</strong>
+                            </div>
+                            <div class="execution-status">
+                                <div class="status-message">Executing function...</div>
+                                <div class="progress-bar">
+                                    <div class="progress-fill"></div>
+                                </div>
+                            </div>
                         </div>
                     ` : ''}
                 </div>
@@ -504,30 +749,284 @@ function updateToolCallArtifact(artifact, toolCallsData, isComplete = false) {
         `;
     });
     
-    if (!html) {
-        html = isComplete ? 'No tool calls detected' : 'Analyzing your request...';
-    }
-    
     container.innerHTML = html;
+    
+    // Add staggered animations for new tool calls
+    const toolItems = container.querySelectorAll('.enhanced-tool-call-item');
+    toolItems.forEach((item, index) => {
+        if (!item.classList.contains('animated')) {
+            item.style.animationDelay = `${index * 100}ms`;
+            item.classList.add('slide-in', 'animated');
+        }
+    });
+    
     scrollToBottom();
 }
 
-// Format tool call result for display
-function formatToolResult(result) {
+// Get status icon with better visual indicators
+function getStatusIcon(status) {
+    const icons = {
+        'calling': '⏳',
+        'processing': '🔄',
+        'completed': '✅',
+        'error': '❌',
+        'pending': '⏸️'
+    };
+    return icons[status] || '🔄';
+}
+
+// Calculate duration for tool calls
+function calculateDuration(timestamp) {
+    if (!timestamp) return null;
+    const start = new Date(timestamp);
+    const now = new Date();
+    const diff = now - start;
+    if (diff < 1000) return `${diff}ms`;
+    return `${(diff / 1000).toFixed(1)}s`;
+}
+
+// Toggle tool call details
+function toggleToolDetails(toolItem) {
+    if (!toolItem) return;
+    
+    const details = toolItem.querySelector('.tool-call-details');
+    const button = toolItem.querySelector('.tool-expand-btn');
+    
+    if (!details || !button) return;
+    
+    const isCollapsed = details.classList.contains('collapsed');
+    
+    if (isCollapsed) {
+        details.classList.remove('collapsed');
+        details.classList.add('expanded');
+        button.classList.add('expanded');
+    } else {
+        details.classList.add('collapsed');
+        details.classList.remove('expanded');
+        button.classList.remove('expanded');
+    }
+}
+
+// Enhanced tool result formatting with better visualization
+function formatEnhancedToolResult(result) {
     if (typeof result === 'string') {
-        // If it looks like JSON, try to format it
+        // Check if it's JSON
         try {
             const parsed = JSON.parse(result);
-            return `<pre><code>${JSON.stringify(parsed, null, 2)}</code></pre>`;
+            return `
+                <div class="result-json">
+                    <div class="result-header">
+                        <span class="result-type">JSON Response</span>
+                        <button class="copy-result-btn" onclick="copyToClipboard(this)" data-content="${escapeHtml(result)}">
+                            <svg viewBox="0 0 24 24" width="14" height="14">
+                                <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" fill="currentColor"/>
+                            </svg>
+                            Copy
+                        </button>
+                    </div>
+                    <pre class="json-display"><code>${JSON.stringify(parsed, null, 2)}</code></pre>
+                </div>
+            `;
         } catch (e) {
             // Plain text result
-            return `<div class="text-result">${result.replace(/\n/g, '<br>')}</div>`;
+            const isLongText = result.length > 200;
+            return `
+                <div class="result-text ${isLongText ? 'expandable' : ''}">
+                    <div class="result-header">
+                        <span class="result-type">Text Response</span>
+                        <button class="copy-result-btn" onclick="copyToClipboard(this)" data-content="${escapeHtml(result)}">
+                            <svg viewBox="0 0 24 24" width="14" height="14">
+                                <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" fill="currentColor"/>
+                            </svg>
+                            Copy
+                        </button>
+                    </div>
+                    <div class="text-content ${isLongText ? 'truncated' : ''}">
+                        ${result.replace(/\n/g, '<br>')}
+                    </div>
+                    ${isLongText ? '<button class="expand-text-btn" onclick="toggleTextExpansion(this)">Show more</button>' : ''}
+                </div>
+            `;
         }
     } else if (typeof result === 'object') {
-        return `<pre><code>${JSON.stringify(result, null, 2)}</code></pre>`;
+        return `
+            <div class="result-json">
+                <div class="result-header">
+                    <span class="result-type">Object Response</span>
+                    <button class="copy-result-btn" onclick="copyToClipboard(this)" data-content="${escapeHtml(JSON.stringify(result, null, 2))}">
+                        <svg viewBox="0 0 24 24" width="14" height="14">
+                            <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" fill="currentColor"/>
+                        </svg>
+                        Copy
+                    </button>
+                </div>
+                <pre class="json-display"><code>${JSON.stringify(result, null, 2)}</code></pre>
+            </div>
+        `;
     } else {
-        return `<div class="text-result">${String(result)}</div>`;
+        return `
+            <div class="result-text">
+                <div class="result-header">
+                    <span class="result-type">Simple Response</span>
+                    <button class="copy-result-btn" onclick="copyToClipboard(this)" data-content="${escapeHtml(String(result))}">
+                        <svg viewBox="0 0 24 24" width="14" height="14">
+                            <path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" fill="currentColor"/>
+                        </svg>
+                        Copy
+                    </button>
+                </div>
+                <div class="text-content">${String(result)}</div>
+            </div>
+        `;
     }
+}
+
+// Utility functions for enhanced artifact
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function copyToClipboard(button) {
+    const content = button.getAttribute('data-content');
+    navigator.clipboard.writeText(content).then(() => {
+        const originalText = button.innerHTML;
+        button.innerHTML = `
+            <svg viewBox="0 0 24 24" width="14" height="14">
+                <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" fill="currentColor"/>
+            </svg>
+            Copied!
+        `;
+        button.classList.add('copied');
+        setTimeout(() => {
+            button.innerHTML = originalText;
+            button.classList.remove('copied');
+        }, 2000);
+    }).catch(err => {
+        console.error('Failed to copy:', err);
+        showInfoMessage('Failed to copy to clipboard');
+    });
+}
+
+function toggleTextExpansion(button) {
+    const textContent = button.previousElementSibling;
+    const isExpanded = textContent.classList.contains('expanded');
+    
+    if (isExpanded) {
+        textContent.classList.remove('expanded');
+        textContent.classList.add('truncated');
+        button.textContent = 'Show more';
+    } else {
+        textContent.classList.add('expanded');
+        textContent.classList.remove('truncated');
+        button.textContent = 'Show less';
+    }
+}
+
+// Update reasoning display with AI's internal thoughts
+function updateReasoningDisplay(artifact, reasoning) {
+    const reasoningContent = artifact.querySelector('.reasoning-content');
+    if (!reasoningContent) return;
+    
+    // Remove thinking indicator if it exists
+    const thinkingIndicator = reasoningContent.querySelector('.thinking-indicator');
+    if (thinkingIndicator) {
+        thinkingIndicator.style.opacity = '0';
+        setTimeout(() => thinkingIndicator.remove(), 300);
+    }
+    
+    // Create reasoning display
+    const reasoningDisplay = document.createElement('div');
+    reasoningDisplay.className = 'reasoning-display';
+    
+    if (typeof reasoning === 'string') {
+        reasoningDisplay.innerHTML = `
+            <div class="reasoning-item">
+                <div class="reasoning-header">
+                    <span class="reasoning-icon">🤔</span>
+                    <strong>AI Reasoning</strong>
+                </div>
+                <div class="reasoning-text">${reasoning.replace(/\n/g, '<br>')}</div>
+            </div>
+        `;
+    } else if (typeof reasoning === 'object') {
+        let html = '';
+        
+        // Handle different reasoning structures
+        if (reasoning.steps && Array.isArray(reasoning.steps)) {
+            html += `
+                <div class="reasoning-item">
+                    <div class="reasoning-header">
+                        <span class="reasoning-icon">🧠</span>
+                        <strong>Thinking Process</strong>
+                    </div>
+                    <div class="reasoning-steps">
+                        ${reasoning.steps.map((step, index) => `
+                            <div class="reasoning-step">
+                                <span class="step-number">${index + 1}</span>
+                                <span class="step-text">${step}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        }
+        
+        if (reasoning.analysis) {
+            html += `
+                <div class="reasoning-item">
+                    <div class="reasoning-header">
+                        <span class="reasoning-icon">🔍</span>
+                        <strong>Analysis</strong>
+                    </div>
+                    <div class="reasoning-text">${reasoning.analysis.replace(/\n/g, '<br>')}</div>
+                </div>
+            `;
+        }
+        
+        if (reasoning.approach) {
+            html += `
+                <div class="reasoning-item">
+                    <div class="reasoning-header">
+                        <span class="reasoning-icon">🎯</span>
+                        <strong>Approach</strong>
+                    </div>
+                    <div class="reasoning-text">${reasoning.approach.replace(/\n/g, '<br>')}</div>
+                </div>
+            `;
+        }
+        
+        // Fallback for generic object
+        if (!html) {
+            html = `
+                <div class="reasoning-item">
+                    <div class="reasoning-header">
+                        <span class="reasoning-icon">💭</span>
+                        <strong>Internal Thoughts</strong>
+                    </div>
+                    <div class="reasoning-json">
+                        <pre><code>${JSON.stringify(reasoning, null, 2)}</code></pre>
+                    </div>
+                </div>
+            `;
+        }
+        
+        reasoningDisplay.innerHTML = html;
+    }
+    
+    // Add with animation
+    reasoningDisplay.style.opacity = '0';
+    reasoningDisplay.style.transform = 'translateY(10px)';
+    reasoningContent.appendChild(reasoningDisplay);
+    
+    setTimeout(() => {
+        reasoningDisplay.style.transition = 'all 0.3s ease-out';
+        reasoningDisplay.style.opacity = '1';
+        reasoningDisplay.style.transform = 'translateY(0)';
+    }, 100);
+    
+    scrollToBottom();
 }
 
 // Safe JSON stringify to handle errors/cycles
@@ -960,6 +1459,9 @@ async function sendClassifiedTicketToAgent(ticketId) {
         appState.isStreaming = true;
         elements.sendButton.disabled = true;
 
+        // Always create artifact for AI analysis visibility
+        const analysisArtifact = createSingleToolCallArtifact(assistantMessageElement);
+
         // Use streaming response for classified ticket processing
         await streamResponse(prompt, assistantMessageElement);
 
@@ -1116,6 +1618,9 @@ async function sendTicketToAgent(ticketId) {
     try {
         appState.isStreaming = true;
         elements.sendButton.disabled = true;
+
+        // Always create artifact for AI analysis visibility
+        const analysisArtifact = createSingleToolCallArtifact(assistantMessageElement);
 
         // Use streaming response for ticket processing
         await streamResponse(prompt, assistantMessageElement);

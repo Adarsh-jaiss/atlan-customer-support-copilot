@@ -10,8 +10,7 @@ from copilot.memory import create_checkpointer
 from langgraph.prebuilt import create_react_agent
 from classification_engine.classifier import tickets_classifier, classify_single_ticket
 from rag.query import query_knowledge_base
-from configs.settings import OPENAI_MODEL, OLLAMA_MODEL, OLLAMA_HOST
-from langchain_ollama.chat_models import ChatOllama
+from configs.settings import OPENAI_MODEL
 
 logger = logging.getLogger(__name__)
 agent_ctx = contextvars.ContextVar("agent")
